@@ -73,7 +73,7 @@ author how to state it. `EthCLSpecs/Proofs/` splits per fork the same way.
 
 ## Dependencies between rows
 
-Four claims rest on another row:
+These claims rest on another row:
 
 - The committee partition rests on the shuffle bijection.
 - Plausible liveness rests on accountable safety.
@@ -89,16 +89,34 @@ Four claims rest on another row:
   deposit branch is checked against: the deposit contract's incremental tree is
   not an `ofShape` tree, the case the SizzLean ledger's `branch × deposit-tree`
   row holds out of scope.
-- The Heze FOCIL handler postconditions rest on same-key insertion for `FcMap`.
-  [`EthCLLib/Proofs/LawfulFcMap.lean`](../../EthCLLib/EthCLLib/Proofs/LawfulFcMap.lean)
-  states those laws: lookup of an inserted key returns the inserted value, and
-  `contains` agrees with `Option.isSome` of lookup. `instLawfulFcMapTreeMap`
-  needs `[Std.TransOrd K]`. `instLawfulFcMapHashMap` needs `[EquivBEq K]` and
-  `[LawfulHashable K]`. `instTransOrdVectorUInt8` supplies transitivity for
-  `Root` (`Vector UInt8 32`) along the existing `instOrdVectorUInt8`
-  comparator, so both families synthesize at those keys. The theorems to cite
-  are `FcMap.lookup_insert_self` and `FcMap.contains_insert_self`. The
-  handler-postcondition theorems themselves remain later work.
+- `VerifiedImpliesRecorded` is a joint claim of `getForkchoiceStore` and
+  `onExecutionPayloadEnvelope`. The local postcondition at the written root
+  cites `FcMap.lookup_insert_self` and `FcMap.contains_insert_self` in
+  [`EthCLLib/Proofs/LawfulFcMap.lean`](../../EthCLLib/EthCLLib/Proofs/LawfulFcMap.lean).
+  `instLawfulFcMapTreeMap` needs `[Std.TransOrd K]`. `instLawfulFcMapHashMap`
+  needs `[EquivBEq K]` and `[LawfulHashable K]`. `instTransOrdVectorUInt8`
+  supplies transitivity for `Root` (`Vector UInt8 32`), so both families
+  synthesize at those keys. The empty-anchor half also needs lookup and
+  `contains` of `FcMap.empty`. Preservation at roots other than the written
+  one needs the fact that insert at one key leaves every other key unchanged.
+  `LawfulFcMap` does not state those two laws. A source audit identifies
+  `getForkchoiceStore` and `onExecutionPayloadEnvelope` as the committed
+  writers of `payloads` and `payloadInclusionListSatisfaction`. Global
+  preservation still requires frame lemmas for the remaining committed
+  handlers. The reverse implication is not the invariant.
+  `recordPayloadInclusionListSatisfaction` returns a store with the new bit
+  and the old `payloads`.
+- `getPayloadStatusTiebreaker` rests on `shouldExtendPayload` returning
+  `false`, as in `shouldExtendPayload_run_eq_false_of_recorded_unsatisfied`.
+  The envelope postcondition is one way to establish that hypothesis from a
+  successful writer. The tiebreaker theorem does not rest on it. The full
+  `getHead` walk is not a row here.
+- The transport from `Heze.shouldExtendPayload` to `Gloas.shouldExtendPayload`
+  rests on `SharesEpbsView` and one lemma per inherited callee that does not
+  call the override. It does not rest on `VerifiedImpliesRecorded`.
+- The successful-set claim for `collectInclusionListTransactions` rests on a
+  fold law the generic `FcMap` interface does not give. Unreachability of the
+  proved `.missingKey` arm rests on the timeliness row of `processInclusionList`.
 
 ---
 
@@ -264,10 +282,117 @@ Properties specific to the fork-choice store and the LMD-GHOST tree: agreement b
 
 ## Heze
 
-Heze is a twelve-declaration diff over Gloas, and only its FOCIL gate has been
-read for proof candidates so far. Every Gloas row above applies to Heze's
-re-elaboration of that declaration as a separate claim about a separate
-constant.
+Heze is a twelve-declaration diff over Gloas. A proof about a Gloas declaration
+remains a separate claim about Heze's re-elaboration of that declaration.
+This matters here because Heze keeps Gloas's ePBS fork-choice machinery while
+adding FOCIL state and decision logic that the inherited machinery can consume.
+The goal of this workstream is therefore not only to characterize individual
+Heze functions, but to prove that the ePBS and FOCIL pieces compose correctly
+across state writes, later reads, inherited calls, and fork-choice decisions.
+
+The recurring proof shape is:
+
+`writer → state fact / invariant → reader → fork-choice consequence`
+
+The steps are kept as separate, reusable theorems rather than collapsed into
+one end-to-end proof. A writer first establishes a precise fact about the state
+it returns. Invariants then describe which of those facts must continue to hold
+across later committed transitions. Reader theorems consume those facts without
+having to reopen the writer's implementation, and fork-choice theorems turn the
+reader result into an observable protocol consequence. This separation also
+keeps the dependencies minimal: a downstream theorem depends on the property it
+actually needs, while an earlier handler is only one way of establishing that
+property.
+
+The work is reasoned about in three complementary layers:
+
+| Conceptual layer | Purpose | In this workstream |
+| --- | --- | --- |
+| **Cross-fork refinement** | State precisely what Heze preserves from Gloas ePBS and what FOCIL deliberately changes. The comparison relates only the ePBS-observable projections of a Heze and Gloas store rather than requiring equality of the fork-specific store types. | Under `SharesEpbsView`, the inherited ePBS reads agree. A recorded FOCIL `true` continues through behavior equivalent to the Gloas ePBS tail; `false` terminates the Heze extension decision early; a missing FOCIL record is a Heze-specific error case. |
+| **State safety and invariants** | Connect state written by one component to assumptions made later by another, and distinguish a local postcondition from a property of all relevant committed states. | A successful payload reveal records both the payload and its FOCIL satisfaction result at the written root. The later `VerifiedImpliesRecorded` invariant strengthens this into the one-way property needed by the reader: a verified payload has a recorded satisfaction result. Initialization and frame/preservation lemmas are what make that a global store property. |
+| **Protocol consequences** | Compose the lower-level facts into the fork-choice behavior that gives the proof protocol-level meaning. | A recorded `false` makes `shouldExtendPayload` return `false`; for the previous-slot FULL candidate this gives tiebreaker `0`, while EMPTY has tiebreaker `1`, so one `betterOf` comparison selects EMPTY. This does not yet claim that the full `getHead` walk reaches that node. |
+
+These are conceptual reasoning layers, not new proof-ledger categories, so the
+rows below remain organized under the ledger's existing taxonomy. They are also
+not a single strict pipeline. The cross-fork refinement can be proved
+independently of the global store invariant; the invariant makes the production
+read path safe, while the protocol-consequence proofs consume whichever local or
+global hypotheses their statements actually require.
+
+A Heze row is added for an inherited declaration only when the FOCIL diff gives
+that Heze constant a distinct proof obligation.
+
+### First composition story
+
+The first proof story follows one FOCIL result from the handler that records it
+to the fork-choice decision that consumes it:
+
+`onExecutionPayloadEnvelope`
+→ payload + FOCIL satisfaction result
+→ `isPayloadInclusionListSatisfied`
+→ `shouldExtendPayload`
+→ `getPayloadStatusTiebreaker`
+→ one `betterOf` EMPTY/FULL comparison
+
+**1. Writer — establish the local store facts.**
+
+A successful `onExecutionPayloadEnvelope` commits two facts at the same root:
+the execution payload is present in `payloads`, and
+`payloadInclusionListSatisfaction` contains the FOCIL result computed for that
+payload. The first proofs establish those facts locally on the handler's returned
+store using the same-key `FcMap` laws.
+
+**2. Reader — consume the recorded result.**
+
+`shouldExtendPayload` first checks that the payload is verified, then reads the
+FOCIL result through `isPayloadInclusionListSatisfied`.
+
+- A recorded `false` makes the extension decision `false`.
+- A recorded `true` continues into the inherited ePBS tail.
+- A missing record can still occur on an arbitrary hand-built store.
+
+The separate `VerifiedImpliesRecorded` invariant is what will later rule out
+that missing-record case for verified roots along the committed store path.
+Keeping that invariant separate from the local writer theorem avoids requiring
+global reachability or frame proofs before the local composition can be used.
+
+**3. Fork-choice consequence — expose the protocol effect.**
+
+In this previous-slot EMPTY/FULL comparison, weight and root do not distinguish
+the candidates, so the payload-status tiebreaker becomes the deciding key.
+
+For a previous-slot FULL candidate, `shouldExtendPayload = false` gives FULL
+tiebreaker `0`, while EMPTY has tiebreaker `1`. With equal weight and root, one
+`betterOf` step therefore selects EMPTY.
+
+The reusable tiebreaker theorem depends on the `false` extension result, not on
+`onExecutionPayloadEnvelope` itself. The envelope theorem is one way to establish
+that premise from a successful reveal. This keeps the writer and fork-choice
+facts independently reusable.
+
+**4. Cross-fork interpretation — relate the result back to Gloas.**
+
+In parallel, the cross-fork refinement track explains what the same result means
+relative to Gloas. Under `SharesEpbsView`, a recorded FOCIL `true` continues
+through the same ePBS decision observed in Gloas, while a recorded `false` adds
+the Heze restriction.
+
+This is where the local writer/read facts become a compositional statement about
+how Heze adds FOCIL to inherited ePBS behavior.
+
+This story stops at one EMPTY/FULL comparison. It does not claim that the full
+`getHead` walk reaches that node.
+
+### Safety and invariant preservation
+
+Functions with a specific invariant, precondition bundle, or side-effect guarantee that should hold whenever the function runs: exactly-once behavior, mutual exclusion between cases, or a value staying untouched under some condition.
+
+| Function | Location | Property | Status | Tracking |
+| --- | --- | --- | --- | --- |
+| `getForkchoiceStore` | `Heze/ForkChoice.lean:467-503` | One half of a joint claim with `onExecutionPayloadEnvelope`. This is the initialization, the base case, of `VerifiedImpliesRecorded`. The `Prop` holds vacuously because `payloads` is empty, so `isPayloadVerified` is false at every root. The satisfaction map is empty with it. Stating the empty lookups needs laws `LawfulFcMap` does not yet give | proposed |  |
+| `onExecutionPayloadEnvelope` | `Heze/ForkChoice.lean:426-448` | The other half of the joint claim with `getForkchoiceStore`. `VerifiedImpliesRecorded` says `isPayloadVerified store root = true` implies `FcMap.lookup store.payloadInclusionListSatisfaction root` is `some`. A successful `onExecutionPayloadEnvelope_run_eq_of_successful_checks` establishes it at the written root, because that equation inserts `payloads` and the satisfaction key there. Preservation at other roots waits on the missing other-key insert law. A rejected run has no post-state on `ForkChoiceStoreRun`. The store `recordPayloadInclusionListSatisfaction` returns inserts the bit and leaves `payloads` unchanged, and is outside this claim. A source audit identifies this function and `getForkchoiceStore` as the committed writers of the two maps. Global preservation still requires frame lemmas for the remaining committed handlers | proposed |  |
+| `processInclusionList` | `Heze/ForkChoice.lean:170-191` | A list is stored only on the first-list branch, and that branch inserts `inclusionLists` and `inclusionListTimeliness` at the same list root. From `InclusionListStore.empty`, every stored list root is a key of `inclusionListTimeliness`. The other branches do not add a list | proposed |  |
+| `isPayloadInclusionListSatisfied` | `Heze/ForkChoice.lean:305-313` | Under `VerifiedImpliesRecorded`, a verified root cannot take the missing-record assert. The helper can still assert on an unverified root with no record. Establishing `VerifiedImpliesRecorded` on committed stores is the separate joint invariant claim—requiring initialization, envelope preservation, and frame preservation—not this reader row | proposed |  |
 
 ### Fork-choice correctness
 
@@ -275,15 +400,18 @@ Properties specific to the fork-choice store and the LMD-GHOST tree: agreement b
 
 | Function | Location | Property | Status | Tracking |
 | --- | --- | --- | --- | --- |
-| `shouldExtendPayload` | `Heze/ForkChoice.lean:320-342` | The complete `.run` equation at `ForkChoiceStoreRun (Store map)`: block lookup, `getCurrentSlot`, the slot increment and assertion, `isPayloadVerified`, `isPayloadInclusionListSatisfied`, then the inherited Gloas tail. Named corollaries cover the prefix rejects, the FOCIL gate (unverified, missing record, recorded `false`, recorded `true`), the vote membership asserts, and the inherited Gloas accept and reject arms. Successful binds keep the intermediate runner states. A reject returns the error alone. Handler postconditions that expose the inserted payload and inclusion-list satisfaction bit, composition of those writes with this read-side equation, and the end-to-end corollary from successful envelope processing to the extension decision, remain later work. See the `proposed` `onExecutionPayloadEnvelope` row for those obligations | proved | `Proofs/Heze/ShouldExtendPayload.lean` |
+| `shouldExtendPayload` | `Heze/ForkChoice.lean:320-342` | The complete `.run` equation at `ForkChoiceStoreRun (Store map)`: block lookup, `getCurrentSlot`, the slot increment and assertion, `isPayloadVerified`, `isPayloadInclusionListSatisfied`, then the inherited Gloas tail. Named corollaries cover the prefix rejects, the FOCIL gate (unverified, missing record, recorded `false`, recorded `true`), the vote membership asserts, and the inherited Gloas accept and reject arms. Successful binds keep the intermediate runner states. A reject returns the error alone. The local envelope postconditions and the recorded-false composition are the first `onExecutionPayloadEnvelope` postcondition row. The branch where the recorded bit is `true` is the second. `VerifiedImpliesRecorded` is the joint claim with `getForkchoiceStore`. Transport to `Gloas.shouldExtendPayload` is the later row for this function | proved | `Proofs/Heze/ShouldExtendPayload.lean` |
 | `getInclusionListCommittee` | `Heze/ForkChoice.lean:204-212` | Complete `.run` equation at `ForkChoiceStoreRun σ`: empty concatenated indices throw the arithmetic error; a nonempty array returns `cyclicSample` of those indices and leaves the runner state unchanged | proved | follow-up to #82, `Proofs/Heze/GetInclusionListTransactions.lean` |
 | `getInclusionListTransactions` | `Heze/ForkChoice.lean:222-230` | Whole-operation `.run` equation at `ForkChoiceStoreRun (Store map)`: the committee run bound to collection at the committee's stored lists. Empty-committee and missing-timeliness errors follow as untagged corollaries | proved | follow-up to #82, `Proofs/Heze/GetInclusionListTransactions.lean` |
-| `collectInclusionListTransactions` | `Heze/ForkChoice.lean:135-152` | The collected set: an equivocator's entry contributes nothing; at `onlyTimely = true` an entry contributes exactly when its stored timeliness is `true`; at `onlyTimely = false` every non-equivocator entry contributes; the result is `arrayUnion` of the contributions, so it contains no duplicates. `getInclusionListTransactions_run_eq` fixes the arguments passed to the collector but leaves the returned array unconstrained | proposed |  |
+| `collectInclusionListTransactions` | `Heze/ForkChoice.lean:135-152` | The collected set: an equivocator's entry contributes nothing; at `onlyTimely = true` an entry contributes exactly when its stored timeliness is `true`; at `onlyTimely = false` every non-equivocator entry contributes; the result is `arrayUnion` of the contributions, so it contains no duplicates. `getInclusionListTransactions_run_eq` fixes the arguments passed to the collector but leaves the returned array unconstrained. This is the exclusion claim for an equivocator and the timeliness filter for a stored list. A generic `FcMap` fold law is not available, so the successful array stays open at an arbitrary `map`. Under the timeliness row of `processInclusionList`, a list this store recorded does not take the `.missingKey` arm | proposed |  |
 | `recordPayloadInclusionListSatisfaction` | `Heze/ForkChoice.lean:406-418` | Complete `.run` equation at `ForkChoiceStoreRun (Store map)`: slot-zero checked-sub arithmetic error; empty-committee and missing-timeliness collector errors; arbitrary collector-error propagation; successful collection recording `isInclusionListSatisfied payload ilTxs` at `root` and preserving the collector's runner state | proved | follow-up to #82, `Proofs/Heze/RecordPayloadInclusionListSatisfaction.lean`, `Proofs/Heze/GetInclusionListTransactions.lean` (successful-path origin #82) |
 | `onExecutionPayloadEnvelope` | `Heze/ForkChoice.lean:426-448` | `onExecutionPayloadEnvelope_run` is the complete compositional `.run` equation at `ForkChoiceStoreRun (Store map)`: missing `blockStates` is `.assert "envelope.beacon_block_root in store.block_states"`; failed data availability is `.assert "(isDataAvailable envelope.beaconBlockRoot)"`; verification and recorder errors propagate unchanged; success is the handler's final `set` of `blockStates` and `payloads` on the recorder's explicitly returned store, discarding the recorder-produced runner state. `onExecutionPayloadEnvelope_run_of_pureState` restates the whole equation over a plain block state `state`, stored as `pureState state`, and `onExecutionPayloadEnvelope_run_eq_of_successful_checks` restates the successful branch as the original store updated by three same-root `FcMap.insert` expressions. `verifyExecutionPayloadEnvelope_pureState` proves that a successful verification on `pureState state` returns `pureState state`, so the corollaries ask only that the verification succeeds. Same-key `FcMap` insertion is available in `EthCLLib.Proofs.LawfulFcMap`, with `treeMap` and `hashMap` instances at `Root` | proved | #92, `Proofs/Heze/OnExecutionPayloadEnvelope.lean` (successful-path origin #84) |
-| `onExecutionPayloadEnvelope` | `Heze/ForkChoice.lean:426-448` | Postconditions on the final store of `onExecutionPayloadEnvelope_run_eq_of_successful_checks`: lookup-after-insert and contains-after-insert, including a later `some false` and `isPayloadVerified`; composition with the read-side characterizations `isPayloadInclusionListSatisfied_run` and `shouldExtendPayload_run`; the end-to-end corollary from successful envelope processing to the extension decision. The generic `FcMap` interface provides no insert/lookup or insert/contains law, so this needs `LawfulFcMap` | proposed |  |
-| `isPayloadInclusionListSatisfied` | `Heze/ForkChoice.lean:305` | The complete `.run` equation at `ForkChoiceStoreRun (Store map)`: a missing satisfaction key is the membership assert; a recorded value is returned only when the payload is verified, otherwise `false`. Corollaries name the missing-record reject, an unverified recorded value, a recorded `false`, and a recorded `true` with a verified payload. Success leaves `runnerStore` unchanged. Producing the satisfaction bit and pairing it with the payload remain later handler work | proved | `Proofs/Heze/IsPayloadInclusionListSatisfied.lean` |
+| `onExecutionPayloadEnvelope` | `Heze/ForkChoice.lean:426-448` | On the store `onExecutionPayloadEnvelope_run_eq_of_successful_checks` returns, under `[LawfulFcMap map Root]`: `FcMap.lookup` of `payloadInclusionListSatisfaction` at `signedEnv.message.beaconBlockRoot` is `some (isInclusionListSatisfied signedEnv.message.payload ilTxs)`, `FcMap.contains` of `payloads` at that root is `true`, and `isPayloadVerified` is `true`. The bit is that engine result. When the bit is `false` and the slot-prefix hypotheses of `shouldExtendPayload_run_eq_false_of_recorded_unsatisfied` hold, `shouldExtendPayload` returns `false`. Cite `FcMap.lookup_insert_self` and `FcMap.contains_insert_self`. Other roots, `VerifiedImpliesRecorded` for the whole store, and the `true` bit are separate rows | proposed |  |
+| `isPayloadInclusionListSatisfied` | `Heze/ForkChoice.lean:305` | The complete `.run` equation at `ForkChoiceStoreRun (Store map)`: a missing satisfaction key is the membership assert; a recorded value is returned only when the payload is verified, otherwise `false`. Corollaries name the missing-record reject, an unverified recorded value, a recorded `false`, and a recorded `true` with a verified payload. Success leaves `runnerStore` unchanged. Under `VerifiedImpliesRecorded`, the missing-record arm on a verified root is the later row for this function | proved | `Proofs/Heze/IsPayloadInclusionListSatisfied.lean` |
 | `processInclusionList` | `Heze/ForkChoice.lean:170` | At most one stored list per validator per committee, asserted in its docstring and not proved. A conflicting second list leaves the stored list untouched and records the sender as an equivocator for that committee. The handler then ignores later lists from that validator on entry | proposed |  |
+| `onExecutionPayloadEnvelope` | `Heze/ForkChoice.lean:426-448` | On that same post-state, when `isInclusionListSatisfied signedEnv.message.payload ilTxs = true`, `isPayloadInclusionListSatisfied` returns `true` and `shouldExtendPayload` returns the inherited tail. The tail hypotheses stay in the statement: both PTC vote arrays, proposer boost, and parent fullness. The statement takes the stored bit. It does not assume the optimistic `ExecutionEngine` instance | proposed |  |
+| `shouldExtendPayload` | `Heze/ForkChoice.lean:320-342` | Under `SharesEpbsView`, a shared prefix failure, an unverified root, and a verified root with a recorded `true` satisfaction bit give the same extension result as `Gloas.shouldExtendPayload`. Recorded `false` returns `false`. A missing satisfaction key asserts on the Heze side. `getPayloadStatusTiebreaker` is a separate row | proposed |  |
+| `getPayloadStatusTiebreaker` | `Heze/ForkChoice.lean:344` | For a previous-slot EMPTY/FULL pair at the same root, if `shouldExtendPayload = false`, EMPTY's tiebreaker is `1` and FULL's is `0`. Since `getWeight` is `0` for both in that previous-slot decision and the roots are equal, a `betterOf` corollary selects EMPTY. The reusable theorem depends on the `false` extension result; a successful envelope is one way to establish that premise | proposed |  |
 
 ---
 
