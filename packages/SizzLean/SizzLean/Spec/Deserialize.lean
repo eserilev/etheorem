@@ -662,7 +662,7 @@ private def roundTripVarContainer
   match SSZType.deserialize s (SSZType.serialize s v) with
   | .ok (y, n) =>
       let yv : SSZType.interpFields [.bool, .list .bool 8, .uintN 32] := y
-      decide (yv.1 = a) && decide (yv.2.1.val = bs.val) && decide (yv.2.2.1 = c) &&
+      decide (yv.1 = a) && decide (yv.2.1.val = bs.val) && decide (@Eq UInt32 yv.2.2.1 c) &&
         decide (n = (SSZType.serialize s v).size)
   | .error _   => false
 

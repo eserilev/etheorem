@@ -20,25 +20,10 @@ import Lake
 open Lake DSL System
 
 /-- Absolute path to LeanHazmatBls's build lib directory (where Lake puts
-`libleanhazmat_bls.{a,so}`), computed at lakefile-load time. The repo root
-is found by walking up from the CWD (the repo root for an umbrella build,
-or this package's dir for a standalone build) to the directory containing
-`packages/hazmat/LeanHazmatBls`. The artefacts need not exist yet at load time,
-LeanHazmatBls builds first as a `require`d dependency. -/
-unsafe def blsLibDir : String := Id.run <| unsafeBaseIO do
-  let rel : FilePath :=
-    "packages" / "hazmat" / "LeanHazmatBls" / ".lake" / "build" / "lib"
-  let marker : FilePath := "packages" / "hazmat" / "LeanHazmatBls"
-  let cwd ← (IO.currentDir).toBaseIO
-  let mut dir : FilePath := cwd.toOption.getD "."
-  for _ in [0:8] do
-    if (← (dir / marker).pathExists) then
-      return (dir / rel).toString
-    match dir.parent with
-    | some p => dir := p
-    | none   => break
-  -- Fallback: relative to CWD (correct when building from the repo root).
-  return rel.toString
+`libleanhazmat_bls.{a,so}`), relative to this lakefile, so it also resolves when
+the package is a dependency of another workspace. -/
+def blsLibDir : String :=
+  (__dir__ / ".." / "LeanHazmatBls" / ".lake" / "build" / "lib").toString
 
 package LeanHazmatKzg where
   license := "LGPL-3.0-only"
@@ -54,7 +39,7 @@ package LeanHazmatKzg where
   -- duplicate symbols. (Monorepo path; a standalone Kzg mirror resolves
   -- Bls through its git `require`.)
   moreLinkArgs := Id.run do
-    let d := unsafe blsLibDir
+    let d := blsLibDir
     if Platform.isOSX then
       #["-L" ++ d, "-lleanhazmat_bls", "-Wl,-rpath," ++ d]
     else
