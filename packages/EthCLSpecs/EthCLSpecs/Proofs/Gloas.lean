@@ -6,6 +6,7 @@ import EthCLSpecs.Proofs.Gloas.GetPtc
 import EthCLSpecs.Proofs.Gloas.InitializePtcWindow
 import EthCLSpecs.Proofs.Gloas.InitiateBuilderExit
 import EthCLSpecs.Proofs.Gloas.IsValidIndexedPayloadAttestation
+import EthCLSpecs.Proofs.Gloas.ProcessDepositRequest
 import EthCLSpecs.Proofs.Gloas.ProcessOperations
 import EthCLSpecs.Proofs.Gloas.Run
 import EthCLSpecs.Proofs.Gloas.UpdateCheckpoints
@@ -49,6 +50,9 @@ Re-exports:
   characterizations of `isValidIndexedPayloadAttestation`, including its adjacent
   nondecreasing and validator-range checks. The semantic layer indexes the
   validator registry in bounds rather than through `!`.
+* `EthCLSpecs.Proofs.Gloas.ProcessDepositRequest`: `processDepositRequest_run`, the
+  whole-transition equation (one pending deposit pushed, nothing else written), and
+  `processDepositRequest_keeps_startIndex`.
 * `EthCLSpecs.Proofs.Gloas.ProcessOperations`: Gloas `processOperations` structural
   coordinator equation (`processOperations_eq_seq`), deposit-gate failure, and
   exact success sequencing; handlers remain

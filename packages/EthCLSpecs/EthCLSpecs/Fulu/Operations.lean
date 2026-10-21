@@ -272,12 +272,9 @@ forkdef processBlsToExecutionChange (sbc : SignedBLSToExecutionChange) : StateTr
 
 /-! ## Execution requests (Electra) -/
 
-/-- `process_deposit_request`. -/
+/-- `process_deposit_request` (Fulu): append a pending deposit. Fulu removed the Electra
+write of `deposit_requests_start_index`. -/
 forkdef processDepositRequest (dr : DepositRequest) : StateTransition Unit := do
-  modifyState fun state =>
-    if (sszGet state depositRequestsStartIndex) == Const.unsetDepositRequestsStartIndex then
-      sszUpdate state with depositRequestsStartIndex := dr.index
-    else state
   modifyState fun state => sszAppend state pendingDeposits
     { pubkey := dr.pubkey, withdrawalCredentials := dr.withdrawalCredentials, amount := dr.amount,
       signature := dr.signature, slot := sszGet state slot }
@@ -377,20 +374,14 @@ forkdef processConsolidationRequest (req : ConsolidationRequest) : StateTransiti
 
 /-! ## process_operations -/
 
-/-- `process_operations`: the deposit-count gate, then each operation list in
-order, then the Electra execution requests. -/
+/-- `process_operations` (Fulu): a block carries no Eth1 deposits, then each operation
+list in order, then the Electra execution requests. -/
 forkdef processOperations (body : BeaconBlockBody) : StateTransition Unit := do
-  let state ← get
-  let limit := umin (sszGet state eth1Data).depositCount (sszGet state depositRequestsStartIndex)
-  if (sszGet state eth1DepositIndex) < limit then
-    assert (UInt64.ofNat body.deposits.size == umin (UInt64.ofNat Const.maxDeposits) (limit - (sszGet state eth1DepositIndex)))
-  else
-    assert (body.deposits.size == 0)
+  assert (body.deposits.size == 0)
 
   for op in body.proposerSlashings do processProposerSlashing op
   for op in body.attesterSlashings do processAttesterSlashing op
   for op in body.attestations do processAttestation op
-  for op in body.deposits do processDeposit op
   for op in body.voluntaryExits do processVoluntaryExit op
   for op in body.blsToExecutionChanges do processBlsToExecutionChange op
   for op in body.executionRequests.deposits do processDepositRequest op
