@@ -123,7 +123,7 @@ package SizzLean where
   -- Same `-march=native` caveat as the C-shim flags: bakes in the
   -- build host's ISA, fine for local dev and bench; for a shipped
   -- binary switch to a portable baseline (`-march=x86-64-v3`).
-  moreLeancArgs := #["-march=native"]
+  moreLeancArgs := #[]
 
 -- The pure-Lean SHA-256 spec. SizzLean is the layer that imports
 -- both this and the FFI binding below, and holds the equivalence

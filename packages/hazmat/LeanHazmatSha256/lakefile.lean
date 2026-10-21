@@ -97,7 +97,7 @@ package LeanHazmatSha256 where
   -- matching the rest of the monorepo. Bakes in the build host's ISA
   -- (fine for local dev / CI); for a portable artefact switch to
   -- `-march=x86-64-v3`.
-  moreLeancArgs := #["-march=native"]
+  moreLeancArgs := #[]
 
 -- C optimisation flags for the SHA-256 shims. `-O3` enables full
 -- optimisation (default `cc` is `-O0`); `-march=native` lets the
@@ -110,7 +110,7 @@ package LeanHazmatSha256 where
 -- find `<openssl/evp.h>` on macOS Homebrew / Nix) stay in the untraced
 -- `weakArgs` position; they vary by system without changing what the
 -- code means.
-def cShimTraceFlags : Array String := #["-fPIC", "-O3", "-march=native"]
+def cShimTraceFlags : Array String := #["-fPIC", "-O3"]
 
 def cShimIncludeArgs (leanInclude : FilePath) : Array String :=
   #["-I", leanInclude.toString] ++ (unsafe opensslCFlags)

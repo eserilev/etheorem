@@ -20,7 +20,7 @@ defaultTargets = ["LeanSha256"]
 # compression loops in `LeanSha256.Core` is the main win. Cascades
 # to both `lean_lib`s in this package. Same `-march=native` caveat as
 # elsewhere — bakes in the build host's ISA.
-moreLeancArgs = ["-march=native"]
+moreLeancArgs = []
 
 [[lean_lib]]
 name = "LeanSha256"

@@ -106,7 +106,7 @@ def EncodedFits (s : SSZType) (x : s.interp) : Prop :=
 is `2`: the kernel reduces the serialized bytes through the
 encoder equations, which `simp` lines up. -/
 example : (SSZType.serialize (.container [.uintN 8, .uintN 8])
-        (1, 2, PUnit.unit)).size = 2 := by
+        ((1 : UInt8), (2 : UInt8), PUnit.unit)).size = 2 := by
   simp [SSZType.serialize, SSZType.serializeFieldsAux,
     SSZType.fixedSectionSizeFields, SSZType.isFixedSize]
 
@@ -114,9 +114,9 @@ example : (SSZType.serialize (.container [.uintN 8, .uintN 8])
 encoded size is the `2` the example above computes, and `2 < 2 ^ 32`
 is arithmetic. -/
 example : EncodedFits (.container [.uintN 8, .uintN 8])
-    (1, 2, PUnit.unit) := by
+    ((1 : UInt8), (2 : UInt8), PUnit.unit) := by
   have h2 : (SSZType.serialize (.container [.uintN 8, .uintN 8])
-      (1, 2, PUnit.unit)).size = 2 := by
+      ((1 : UInt8), (2 : UInt8), PUnit.unit)).size = 2 := by
     simp [SSZType.serialize, SSZType.serializeFieldsAux,
       SSZType.fixedSectionSizeFields, SSZType.isFixedSize]
   have hML : MAX_LENGTH = 2 ^ 32 := rfl

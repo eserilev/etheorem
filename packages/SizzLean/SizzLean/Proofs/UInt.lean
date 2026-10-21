@@ -456,7 +456,7 @@ theorem decode_encode_uintN16 : ∀ (x : UInt16),
       .ok (x, (SSZType.serialize (.uintN 16) x).size) := by
   intro x
   rw [serialize_uintN16_eq_natToLEBytes]
-  unfold SSZType.deserialize
+  simp only [SSZType.deserialize]
   rw [readUInt16LE_natToLEBytes, size_natToLEBytes]
   simp
 
@@ -467,7 +467,7 @@ theorem decode_encode_uintN32 : ∀ (x : UInt32),
       .ok (x, (SSZType.serialize (.uintN 32) x).size) := by
   intro x
   rw [serialize_uintN32_eq_natToLEBytes]
-  unfold SSZType.deserialize
+  simp only [SSZType.deserialize]
   rw [readUInt32LE_natToLEBytes, size_natToLEBytes]
   simp
 
@@ -478,7 +478,7 @@ theorem decode_encode_uintN64 : ∀ (x : UInt64),
       .ok (x, (SSZType.serialize (.uintN 64) x).size) := by
   intro x
   rw [serialize_uintN64_eq_natToLEBytes]
-  unfold SSZType.deserialize
+  simp only [SSZType.deserialize]
   rw [readUInt64LE_natToLEBytes, size_natToLEBytes]
   simp
 
