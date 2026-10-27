@@ -567,8 +567,8 @@ runtime shuffle; only committees and building the lookahead / sync committee do.
 
 Spec-faithfulness facts worth knowing:
 
-- **`process_pending_deposits` resets `deposit_balance_to_consume` by stop reason.** An
-  eth1-bridge / not-finalized / per-epoch-limit stop resets it to zero; a churn-limit
+- **`process_pending_deposits` resets `deposit_balance_to_consume` by stop reason.** A
+  not-finalized / per-epoch-limit stop resets it to zero; a churn-limit
   stop carries `available_for_processing − processed_amount` forward. `ppdLoop` returns
   the `churnLimitReached` flag so the caller writes the right value.
 - **`apply_pending_deposit` is signature-gated.** A new pubkey joins the registry only
