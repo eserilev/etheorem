@@ -580,6 +580,15 @@ MIN_VALIDATOR_WITHDRAWABILITY_DELAY < 2^64` before the write, so an over-range c
   rejects faithfully (matching the pyspec's `uint64` serialization `ValueError`) instead
   of wrapping silently on Lean's `UInt64`. Valid exits never approach the bound. Gloas
   inherits the substep with no Gloas-side change.
+- **`compute_balance_weighted_selection` rejects an empty candidate set.** It asserts
+  `total > 0` (`gloas/beacon-chain.md:770`, Fulu's `compute_proposer_index` at
+  `electra/beacon-chain.md:467`) and returns a bare `Except`, which the proposer-lookahead,
+  sync-committee, and PTC-window substeps and `upgradeToGloas` lift. Without the assert it
+  read past the empty arrays and filled the selection with validator `0`. One Fulu path
+  classifies differently from the spec: Electra's `get_next_sync_committee_indices` has no
+  assert and raises `ZeroDivisionError` on `i % 0` (`electra/beacon-chain.md:705`), an uncaught
+  fault, where the shared selection rejects with `.assert`. Only a state with no active
+  validator next epoch reaches it, and both reject.
 - **`process_execution_payload` takes the execution engine as valid.** It checks
   parent-hash / prev-randao / timestamp consistency and caches the header;
   `verify_and_notify_new_payload` is the consumer's responsibility, which is valid for
@@ -642,6 +651,7 @@ travel with that switch:
 PTC window from the Fulu pre-state's committees (`initialize_ptc_window` / `compute_ptc`,
 called on the boxed Fulu state since the committee helpers are Fulu's), and onboards
 builders from the pending-deposit queue (`onboard_builders_from_pending_deposits`). It
+returns an `Except`, since a slot with no committee members makes `compute_ptc` reject. It
 takes `GLOAS_FORK_VERSION` as a parameter and sets `fork := {previous :=
 pre.fork.current, current := GLOAS_FORK_VERSION, epoch := currentEpoch}`.
 
@@ -842,7 +852,8 @@ separation.
 - **`Proofs/Gloas/InitializePtcWindow.lean`** establishes three `simp`-closed theorems
   over `initializePtcWindow`: its two index regions (the empty first-epoch
   placeholder and the remainder computed via `computePtcFromFulu`), plus a
-  `default` corollary for the first region.
+  `default` corollary for the first region. Each entry is an `Except`, since
+  `compute_ptc` can reject, and `upgradeToGloas` sequences them.
 
 - **`Proofs/Gloas/InitiateBuilderExit.lean`** gives the whole-transition
   `initiateBuilderExit_run_eq` contract at the box: the run on `pureState preState` returns

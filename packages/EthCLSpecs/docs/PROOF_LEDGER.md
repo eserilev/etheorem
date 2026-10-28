@@ -156,8 +156,8 @@ Functions with a specific invariant, precondition bundle, or side-effect guarant
 | --- | --- | --- | --- | --- |
 | `processProposerSlashing` | `Gloas/Operations.lean:227-257` | Payment-voiding must never touch another proposer's `BuilderPendingPayment` | proposed |  |
 | `processAttestation` | `Gloas/Operations.lean:307-386` | Committee-index safety together with builder-payment weight accounting | proposed |  |
-| `processBuilderPendingPayments` | `Gloas/EpochProcessing.lean:254-273` | Whole-transition equation over a plain `BeaconState`: the run returns `preState` with only `builderPendingWithdrawals` (the qualifying withdrawals, folded through `ProgressiveList.push` in slot order; every one is appended) and `builderPendingPayments` (the window shifted down by `SLOTS_PER_EPOCH` and padded with empties) written. This does not establish protocol-wide exactly-once settlement | proved | #25, `Proofs/Gloas/BuilderPendingPayments.lean` |
-| `processPtcWindow` | `Gloas/EpochProcessing.lean:292-302` | Each newly populated `ptcWindow` entry equals `computePtc` evaluated for its corresponding slot | proposed |  |
+| `processBuilderPendingPayments` | `Gloas/EpochProcessing.lean:257-276` | Whole-transition equation over a plain `BeaconState`: the run returns `preState` with only `builderPendingWithdrawals` (the qualifying withdrawals, folded through `ProgressiveList.push` in slot order; every one is appended) and `builderPendingPayments` (the window shifted down by `SLOTS_PER_EPOCH` and padded with empties) written. This does not establish protocol-wide exactly-once settlement | proved | #25, `Proofs/Gloas/BuilderPendingPayments.lean` |
+| `processPtcWindow` | `Gloas/EpochProcessing.lean:299-309` | On a run that does not reject, each newly populated `ptcWindow` entry equals the committee `computePtc` returns for its corresponding slot. The run rejects exactly when some slot's `computePtc` does | proposed |  |
 | `applyDepositForBuilder` | `Gloas/Operations.lean:130-138` | A deposit with an invalid signature is neither applied to a builder's balance nor requeued | proposed |  |
 | `processBuilderDepositRequest` | `Gloas/Operations.lean:188-204` | A new builder is onboarded only when its deposit signature is valid | proposed |  |
 | `getIndexedPayloadAttestation` | `Gloas/Operations.lean:428-434` | Preserves `pa.data` and `pa.signature`, and produces the sorted multiset of PTC seats selected by `pa.aggregationBits`. The proof requires `Array.qsort` sortedness and permutation lemmas not currently available in core/Std | proposed |  |
@@ -204,9 +204,9 @@ Functions whose entire purpose is the Fulu-to-Gloas upgrade itself: preserving s
 
 | Function | Location | Property | Status | Tracking |
 | --- | --- | --- | --- | --- |
-| `upgradeToGloas` | `Gloas/Upgrade.lean:109-164` | Preserves inherited state while correctly initializing the new ePBS state | proposed |  |
-| `computePtcFromFulu` | `Gloas/Upgrade.lean:43-51` | Agrees with `Gloas.computePtc` once the state is upgraded | proposed |  |
-| `initializePtcWindow` | `Gloas/Upgrade.lean:58-68` | The first `SLOTS_PER_EPOCH` entries are the empty committee, and every remaining entry equals `computePtcFromFulu` at the slot computed by `initializePtcWindow` . A plain `def` inside the fork body rather than a `forkdef`, so it is no spec function and the coverage report's denominator never holds it | proved | #26, `Proofs/Gloas/InitializePtcWindow.lean` |
+| `upgradeToGloas` | `Gloas/Upgrade.lean:116-173` | Preserves inherited state while correctly initializing the new ePBS state | proposed |  |
+| `computePtcFromFulu` | `Gloas/Upgrade.lean:44-52` | Agrees with `Gloas.computePtc` once the state is upgraded | proposed |  |
+| `initializePtcWindow` | `Gloas/Upgrade.lean:63-74` | The first `SLOTS_PER_EPOCH` entries are `pure` of the empty committee, and every remaining entry equals `computePtcFromFulu` at the slot computed by `initializePtcWindow` . A plain `def` inside the fork body rather than a `forkdef`, so it is no spec function and the coverage report's denominator never holds it | proved | #26, `Proofs/Gloas/InitializePtcWindow.lean` |
 
 ### Candidates needing a sharper statement
 
@@ -214,7 +214,7 @@ Functions where the useful theorem hasn't been identified yet, either because th
 
 | Function | Location | Property | Status | Tracking |
 | --- | --- | --- | --- | --- |
-| `computePtc` | `Gloas/EpochProcessing.lean:279-286` | No standalone theorem has been identified yet. The strongest current candidate is its agreement with `computePtcFromFulu` after state upgrade | proposed |  |
+| `computePtc` | `Gloas/EpochProcessing.lean:284-292` | No standalone theorem has been identified yet. The strongest current candidate is its agreement with `computePtcFromFulu` after state upgrade | proposed |  |
 
 
 ---
@@ -243,7 +243,7 @@ Functions where the theorem is a numeric bound, no overflow, no underflow, never
 | `processDeposit` | `Fulu/Operations.lean:225` | Neither the incremented deposit index nor the running total balance exceeds `2^64`. Dafny stated both bounds and assumed them through `{:axiom}` lemmas, so Dafny's statements are reusable as a template. Its proofs are not. A sharper bound is open as well. The branch check needs `eth1DepositIndex < 2^32`, which follows from `eth1DepositIndex <= eth1Data.depositCount` together with a bound on `depositCount`. The consensus spec does not bound `depositCount`, since that count arrives from the execution layer. Any statement here is therefore conditional on the deposit contract's depth-32 capacity | proposed |  |
 | `processRegistryUpdates` | `Fulu/EpochProcessing.lean:176` | The registry never exceeds `VALIDATOR_REGISTRY_LIMIT` | proposed |  |
 | `getBeaconCommittee` | `Fulu/Committees.lean:83` | An active-validator count in `[32, 2^22]` implies every committee size is in `(0, MAX_VALIDATORS_PER_COMMITTEE]`. Dafny proves the same bound in `ActiveValidatorBounds` | proposed |  |
-| `computeBalanceWeightedSelection` | `Fulu/Committees.lean:118` | Its `cbwsAux` sampler loop takes `10000000` fuel, which always suffices for the walk to finish | proposed |  |
+| `computeBalanceWeightedSelection` | `Fulu/Committees.lean:124` | Its `cbwsAux` sampler loop takes `10000000` fuel, which always suffices for the walk to finish | proposed |  |
 
 ### Safety and invariant preservation
 
