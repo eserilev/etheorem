@@ -12,6 +12,8 @@ the `#guard`-style pins here lock the reject and the two epoch substeps that sur
 - the PTC window, whose candidates for a slot are that slot's beacon committees, so a
   registry with fewer active validators than `SLOTS_PER_EPOCH` leaves some slot empty.
 
+A last pin locks the sampler's loop bound, the spec's `uint64` counter.
+
 Each fixture is one validator, active from genesis with a 32 ETH effective balance. The
 unslashed lookahead runs clean, so the reject in the slashed case is the empty candidate
 set and not the fixture. `State` is FFI-backed, so `native_decide`.
@@ -77,5 +79,17 @@ private def pinPtcWindowFewActiveRejects : Bool :=
   | .error (.assert _) _ => true
   | _ => false
 example : pinPtcWindowFewActiveRejects = true := by native_decide
+
+/-- The sampler's bound is the spec's `uint64` counter: with no passes left (fuel `0`, the
+counter past `2**64 - 1`) the walk raises the `.arithmetic` fault of the spec's `i += 1`,
+never a short selection. A selection already full returns before spending a pass. -/
+private def pinSamplerCounterOverflow : Bool :=
+  letI : Preset := minimal
+  letI : HasherTag := fastHasherTag
+  (match cbwsAux #[] #[] #[] ByteArray.empty 1 1 false 0 0 ByteArray.empty #[] with
+    | .error (.arithmetic _) => true | _ => false) &&
+  (match cbwsAux #[] #[] #[] ByteArray.empty 1 1 false 1 0 ByteArray.empty #[7] with
+    | .ok sel => sel == #[7] | _ => false)
+#guard pinSamplerCounterOverflow
 
 end EthCLSpecs.Tests.GloasCommitteesPins
