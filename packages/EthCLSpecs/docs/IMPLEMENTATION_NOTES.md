@@ -270,8 +270,13 @@ an `Except` query) at the read.
   bucket) rather than masking as a default. This covers the operation reads in a state step
   (`process_attestation`'s participation reads, `process_withdrawal_request`'s balance read,
   the pending-consolidation source reads) and the pure queries that return `Except IndexError`
-  because their index is untrusted or a parameter (`get_base_reward`, `get_attesting_indices`,
-  the reward-delta helpers), whose monadic callers bind them through `liftErr`.
+  because their index is untrusted or a parameter (`get_base_reward`, `get_attesting_indices`),
+  whose monadic callers bind them through `liftErr`. The reward-delta helpers and
+  `get_unslashed_participating_indices` return `Except StateTransitionError` instead, since
+  they also raise the `.arithmetic` fault, and they read the per-validator lists
+  (`inactivity_scores`, the participation flags) through `sszGetIdx`: those lists share the
+  registry's length on every reachable state, but the spec raises `IndexError` if one is
+  shorter, so the read does too.
 - **An index a spec validation checks** is read through `assertH (i < size)`
   (`Spec/Assert.lean`): the assert returns the witness, so the read is the proof-carrying,
   reject-free `vs[i]'h.down`, with no default fallback, the bad index having rejected at the
@@ -589,6 +594,19 @@ MIN_VALIDATOR_WITHDRAWABILITY_DELAY < 2^64` before the write, so an over-range c
   assert and raises `ZeroDivisionError` on `i % 0` (`electra/beacon-chain.md:705`), an uncaught
   fault, where the shared selection rejects with `.assert`. Only a state with no active
   validator next epoch reaches it, and both reject.
+- **The epoch substeps' per-validator `uint64` arithmetic is checked.** The spec's `Gwei` /
+  `uint64` operations raise `ValueError` on overflow, so these use `checkedAdd` /
+  `checkedMul` and raise `.arithmetic` instead of wrapping: the justification supermajority
+  products (`* 3`, `* 2`), `inactivity_scores[index] += INACTIVITY_SCORE_BIAS`, the
+  flag-delta products `base_reward * weight [* unslashed_participating_increments]`, the
+  inactivity penalty's `effective_balance * inactivity_scores[index]`, `process_slashings`'
+  `sum(state.slashings)`, its `* PROPORTIONAL_SLASHING_MULTIPLIER_BELLATRIX` and its per-validator
+  penalty product, and the effective-balance hysteresis sums. The hysteresis check's second
+  sum runs only when the first comparison fails, as the spec's `or` short-circuits.
+  `process_effective_balance_updates` reads `balances[index]` through `sszGetIdx`. No reachable
+  state overflows any of these. Left unchecked: `get_total_balance`'s sum (a pure helper
+  whose many callers would all take an `Except`) and the epoch-counter increments
+  (`current_epoch + 1` and similar), which need a slot near `2^64`.
 - **`process_execution_payload` takes the execution engine as valid.** It checks
   parent-hash / prev-randao / timestamp consistency and caches the header;
   `verify_and_notify_new_payload` is the consumer's responsibility, which is valid for
