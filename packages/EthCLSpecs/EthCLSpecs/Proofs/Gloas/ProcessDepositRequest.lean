@@ -20,8 +20,7 @@ namespace EthCLSpecs.Proofs.Gloas
 
 open EthCLLib.Spec
 open EthCLLib.Proofs (pureState runPure runPure_of_run_ok)
-open EthCLSpecs.Gloas
-open EthCLSpecs.Gloas (Preset BeaconState DepositRequest PendingDeposit)
+open EthCLSpecs.Gloas (Slot Preset BeaconState DepositRequest PendingDeposit processDepositRequest)
 
 /-- The pending deposit that `processDepositRequest` appends for `dr` at `slot`. -/
 def depositRequestPending [Preset] (dr : DepositRequest) (slot : Slot) : PendingDeposit :=
