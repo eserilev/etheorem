@@ -11,7 +11,8 @@ Fulu → Gloas fork transition's cached `ptcWindow` as one `Vector.ofFn` over
 first epoch or the remaining two SLOTS_PER_EPOCH regions. Both branches are proved by
 unfolding the definition and letting `simp` reduce the `Vector.ofFn`
 application and discharge the `if`, no induction, no `native_decide`,
-no mathlib.
+no mathlib. Each entry is an `Except`, since `compute_ptc` can reject; the
+statements characterize the entries, which `upgradeToGloas` then sequences.
 
 Statements bind plain `Fulu.BeaconState` values; the seeded window's builder
 receives `pureState state`, and `view_uncachedBox` reduces the reads inside the
@@ -42,7 +43,7 @@ committee, `initialize_ptc_window`'s `emptyCommittee`. -/
 theorem initializePtcWindow_lt [Preset] [HasherTag] :
     ∀ (state : Fulu.BeaconState) (i : Fin (3 * Gloas.Const.slotsPerEpoch)),
       i.val < Gloas.Const.slotsPerEpoch →
-      (initializePtcWindow (pureState state))[i] = Vector.replicate Gloas.Const.ptcSize 0 := by
+      (initializePtcWindow (pureState state))[i] = pure (Vector.replicate Gloas.Const.ptcSize 0) := by
   intro state i h
   simp [initializePtcWindow, h]
 
@@ -66,7 +67,7 @@ theorem initializePtcWindow_ge [Preset] [HasherTag] :
   intro state i h
   simp [initializePtcWindow, Nat.not_lt.mpr h]
 
-/-- The first region's committee is also the ambient `default` for
+/-- The first region's committee is also `pure` of the ambient `default` for
 `Vector ValidatorIndex Gloas.Const.ptcSize` (`ValidatorIndex := UInt64`'s
 `default` is `0`, and `Vector`'s `Inhabited` instance is pointwise), so callers
 that already reason in terms of `default` don't need to unfold
@@ -74,7 +75,7 @@ that already reason in terms of `default` don't need to unfold
 theorem initializePtcWindow_lt_default [Preset] [HasherTag] :
     ∀ (state : Fulu.BeaconState) (i : Fin (3 * Gloas.Const.slotsPerEpoch)),
       i.val < Gloas.Const.slotsPerEpoch →
-      (initializePtcWindow (pureState state))[i] = default := by
+      (initializePtcWindow (pureState state))[i] = pure default := by
   intro state i h
   exact initializePtcWindow_lt state i h
 

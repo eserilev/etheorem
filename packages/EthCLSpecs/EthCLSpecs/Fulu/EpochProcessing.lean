@@ -395,7 +395,7 @@ BLS aggregate pubkey). -/
 forkdef processSyncCommitteeUpdates : StateTransition Unit := do
   let state ← get
   if (currentEpochOf state + 1) % UInt64.ofNat Const.epochsPerSyncCommitteePeriod == 0 then
-    let nsc := getNextSyncCommittee state
+    let nsc ← liftErr (getNextSyncCommittee state)
     set (sszUpdate state with
       currentSyncCommittee := sszGet state nextSyncCommittee,
       nextSyncCommittee := nsc)
@@ -405,7 +405,8 @@ proposers and append the freshly-computed proposers for
 `current_epoch + MIN_SEED_LOOKAHEAD + 1`. -/
 forkdef processProposerLookahead : StateTransition Unit := do
   let state ← get
-  let newProposers := getBeaconProposerIndices state (currentEpochOf state + Const.minSeedLookahead + 1)
+  let newProposers ←
+    liftErr (getBeaconProposerIndices state (currentEpochOf state + Const.minSeedLookahead + 1))
   let old := sszGet state proposerLookahead
   set (sszUpdate state with proposerLookahead :=
     Vector.ofFn (fun i : Fin (2 * Const.slotsPerEpoch) =>
