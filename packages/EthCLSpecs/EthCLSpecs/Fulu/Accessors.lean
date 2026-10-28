@@ -24,9 +24,11 @@ state_section
 forkdef getTotalActiveBalance (state : State) : Gwei :=
   getTotalBalance state (getActiveValidatorIndices state (computeEpochAtSlot (sszGet state slot)))
 
-/-- `get_unslashed_participating_indices(state, flag_index, epoch)`. No committees. -/
+/-- `get_unslashed_participating_indices(state, flag_index, epoch)`. No committees. A
+participation list shorter than the registry rejects with `.outOfBounds`, the spec's
+`IndexError` on `epoch_participation[i]` (`altair/beacon-chain.md:351`). -/
 forkdef getUnslashedParticipatingIndices (state : State) (flagIndex : Nat) (epoch : Epoch) :
-    Array ValidatorIndex := Id.run do
+    Except StateTransitionError (Array ValidatorIndex) := do
   let isCurrent := epoch == computeEpochAtSlot (sszGet state slot)
   let part := if isCurrent then sszGet state currentEpochParticipation else sszGet state previousEpochParticipation
   let validators := sszGet state validators
@@ -34,7 +36,8 @@ forkdef getUnslashedParticipatingIndices (state : State) (flagIndex : Nat) (epoc
 
   for i in getActiveValidatorIndices state epoch do
     let idx := i.toNat
-    if hasFlag (part[idx]!) flagIndex && !(validators[idx]!).slashed then out := out.push i
+    let flags ← sszGetIdx part idx
+    if hasFlag flags flagIndex && !(validators[idx]!).slashed then out := out.push i
   return out
 
 /-- `get_block_root_at_slot`. The pinned `assert slot < state.slot <= slot +
