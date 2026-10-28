@@ -88,8 +88,9 @@ state is `default` (zero validators, slot 0) carrying one queued `PendingConsoli
 advancing to epoch 1 reaches `process_pending_consolidations`, whose plain-list read
 rejects (`outOfBounds`), and the unguarded pinned `process_slots` means the helper
 re-throws it (`.transition`) with nothing cached. The consolidation carrier is
-deliberate. A bare zero-validator advance grinds `cbwsAux`'s 10M fuel instead of
-rejecting. `State` is FFI-backed, so `native_decide`. -/
+deliberate. A bare zero-validator advance would reject later, at the sync-committee
+or proposer-lookahead selection's `assert total > 0`, an `.assert` rather than the
+`outOfBounds` this pin matches. `State` is FFI-backed, so `native_decide`. -/
 private def pinTargetAdvanceRejects : Bool :=
   letI : Preset := minimal
   letI : Config := minimalConfig

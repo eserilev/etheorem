@@ -637,11 +637,12 @@ ePBS fields, and the `genesis` vector format exercises them.
 
 ### 6.2 Fork upgrade
 
-`upgradeToGloas : Fulu.State → Gloas.State` reads a finished Fulu state and
-constructs the Gloas one.
+`upgradeToGloas : Fulu.State → Except StateTransitionError Gloas.State` reads a
+finished Fulu state and constructs the Gloas one. It can reject, since
+`initialize_ptc_window` runs `compute_ptc`.
 
 ```lean
-def upgradeToGloas (pre : Fulu.State) : Gloas.State :=
+def upgradeToGloas (pre : Fulu.State) : Except StateTransitionError Gloas.State :=
   -- reads Fulu fields by sszGet, writes the Gloas BeaconState,
   -- carrying common fields across and initializing the ePBS ones
   ...

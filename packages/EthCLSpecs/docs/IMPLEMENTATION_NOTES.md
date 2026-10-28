@@ -612,6 +612,7 @@ the builder-payment threshold and builder prefixes and domains (universal); and
 PTC window from the Fulu pre-state's committees (`initialize_ptc_window` / `compute_ptc`,
 called on the boxed Fulu state since the committee helpers are Fulu's), and onboards
 builders from the pending-deposit queue (`onboard_builders_from_pending_deposits`). It
+returns an `Except`, since a slot with no committee members makes `compute_ptc` reject. It
 takes `GLOAS_FORK_VERSION` as a parameter and sets `fork := {previous :=
 pre.fork.current, current := GLOAS_FORK_VERSION, epoch := currentEpoch}`.
 
@@ -813,7 +814,8 @@ separation.
 - **`Proofs/Gloas/InitializePtcWindow.lean`** establishes three `simp`-closed theorems
   over `initializePtcWindow`: its two index regions (the empty first-epoch
   placeholder and the remainder computed via `computePtcFromFulu`), plus a
-  `default` corollary for the first region.
+  `default` corollary for the first region. Each entry is an `Except`, since
+  `compute_ptc` can reject, and `upgradeToGloas` sequences them.
 
 - **`Proofs/Gloas/InitiateBuilderExit.lean`** gives the whole-transition
   `initiateBuilderExit_run_eq` contract at the box: the run on `pureState preState` returns

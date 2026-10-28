@@ -39,28 +39,34 @@ boundary: the seed mixes `DOMAIN_PTC_ATTESTER`, the candidate set is every beaco
 committee for the slot concatenated in order, and the payload-timeliness committee
 is the unshuffled balance-weighted selection of `PTC_SIZE` of them. The committee
 machinery is Fulu's (the pre-state is a Fulu state), so the helpers are called
-directly rather than inherited. -/
+directly rather than inherited. A slot with no committee members rejects through
+`compute_balance_weighted_selection`'s `assert total > 0`, as `Gloas.computePtc` does. -/
 def computePtcFromFulu [Preset] [HasherTag] (state : Fulu.State) (slot : Slot) :
-    Vector ValidatorIndex Const.ptcSize :=
+    Except StateTransitionError (Vector ValidatorIndex Const.ptcSize) := do
   let epoch := Fulu.computeEpochAtSlot slot
   let seed := sha ((Fulu.getSeed state epoch Const.domainPtcAttester) ++ uint64ToBytes slot)
   let committeesPerSlot := Fulu.getCommitteeCountPerSlot state epoch
   let indices := (Array.range committeesPerSlot).foldl
     (fun acc i => acc ++ Fulu.getBeaconCommittee state slot i) #[]
-  let sel := Fulu.computeBalanceWeightedSelection state indices seed Const.ptcSize false
-  Vector.ofFn (fun i : Fin Const.ptcSize => sel[i.val]!)
+  let sel ← Fulu.computeBalanceWeightedSelection state indices seed Const.ptcSize false
+  return Vector.ofFn (fun i : Fin Const.ptcSize => sel[i.val]!)
 
-/-- `initialize_ptc_window(pre)`: the cached PTC window seeding the Gloas state.
-The first `SLOTS_PER_EPOCH` slots (the empty previous epoch) hold zeroed
+/-- `initialize_ptc_window(pre)`, entry by entry: the cached PTC window seeding the
+Gloas state. The first `SLOTS_PER_EPOCH` slots (the empty previous epoch) hold zeroed
 committees; the next `(1 + MIN_SEED_LOOKAHEAD)` epochs hold `compute_ptc` for each
 slot. `MIN_SEED_LOOKAHEAD` is `1`, so the window is `3 * SLOTS_PER_EPOCH` long,
-matching the `ptcWindow` field's declared length. -/
+matching the `ptcWindow` field's declared length.
+
+Each entry is the `Except` its `compute_ptc` returns, since that call can reject.
+`upgradeToGloas` sequences the entries in index order (`Vector.mapM id`), so the first
+rejecting slot surfaces, the order the spec's list comprehension evaluates them in. -/
 def initializePtcWindow [Preset] [HasherTag] (state : Fulu.State) :
-    Vector (Vector ValidatorIndex Const.ptcSize) (3 * Const.slotsPerEpoch) :=
+    Vector (Except StateTransitionError (Vector ValidatorIndex Const.ptcSize))
+      (3 * Const.slotsPerEpoch) :=
   let currentEpoch := Fulu.currentEpochOf state
   let emptyCommittee : Vector ValidatorIndex Const.ptcSize := Vector.replicate Const.ptcSize 0
   Vector.ofFn fun i : Fin (3 * Const.slotsPerEpoch) =>
-    if i.val < Const.slotsPerEpoch then emptyCommittee
+    if i.val < Const.slotsPerEpoch then pure emptyCommittee
     else
       let j := i.val - Const.slotsPerEpoch
       let epoch := currentEpoch + UInt64.ofNat (j / Const.slotsPerEpoch)
@@ -105,11 +111,14 @@ Fulu one. `gloasForkVersion` is the config's `GLOAS_FORK_VERSION`
 (`0x07000001` minimal, `0x07000000` mainnet), passed in by the runner since the
 fork version is a config value, not a preset one. The builder onboarding step
 (`onboard_builders_from_pending_deposits`) runs after this in the runner, since it
-needs the Gloas builder-registry helpers. -/
+needs the Gloas builder-registry helpers. Rejects when `initialize_ptc_window` does
+(a slot with no committee members, through `compute_ptc`). -/
 def upgradeToGloas [Preset] [HasherTag] (gloasForkVersion : Version) (pre : Fulu.BeaconState) :
-    Gloas.BeaconState :=
+    Except StateTransitionError Gloas.BeaconState := do
   let epoch : Epoch := pre.slot / UInt64.ofNat Const.slotsPerEpoch
-  { genesisTime                   := pre.genesisTime
+  let ptcWindow ← (initializePtcWindow (SSZ.CachedBox HasherTag.H pre)).mapM id
+  return {
+    genesisTime                   := pre.genesisTime
     genesisValidatorsRoot         := pre.genesisValidatorsRoot
     slot                          := pre.slot
     forkData                      :=
@@ -161,6 +170,6 @@ def upgradeToGloas [Preset] [HasherTag] (gloasForkVersion : Version) (pre : Fulu
     builderPendingWithdrawals     := default
     latestBlockHash               := pre.latestExecutionPayloadHeader.blockHash
     payloadExpectedWithdrawals    := default
-    ptcWindow                     := initializePtcWindow (SSZ.CachedBox HasherTag.H pre) }
+    ptcWindow                     := ptcWindow }
 
 end EthCLSpecs.Gloas
