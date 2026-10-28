@@ -12,8 +12,7 @@ These are pure functions of the boxed `State` (no monad); the epoch and operatio
 steps call them. They hash through the `[HasherTag]` seam (`sha`), so the same
 swap-or-not bytes a real client computes. Performance is unoptimised but adequate
 for the minimal preset: the permutation is recomputed per committee, and the
-weighted sampler iterates with a fuel bound (tail-recursive, so it compiles to a
-loop, valid states fill well within the bound).
+weighted sampler is a tail-recursive loop bounded by the spec's own `uint64` counter.
 -/
 
 set_option autoImplicit false
@@ -92,18 +91,24 @@ forkdef getCommitteeIndices {n : Nat} (bits : Bitvector n) : Array Nat :=
 
 /-! ## Balance-weighted selection -/
 
-/-- `compute_balance_weighted_selection` inner loop. Fuel-bounded rather than closed by
-`termination_by` (§7.2): the loop stops once `selected` reaches `size`, and a candidate
-that fails the weight threshold is skipped without filling a slot, so nothing decreases on
-every iteration and the terminating argument is probabilistic rather than structural. Fuel
-is the flat `10000000` `computeBalanceWeightedSelection` passes; tail-recursive, so it
-compiles to a loop, and valid states fill `size` well within the bound. -/
+/-- `compute_balance_weighted_selection` inner loop, one call per pass of the spec's
+`while len(selected) < size` loop. The loop stops once `selected` reaches `size`, and a
+candidate that fails the weight threshold is skipped without filling a slot, so the selection
+is no measure. The spec's counter is: `i` is a `uint64`, so the `i += 1` that ends the pass at
+`i = 2**64 - 1` raises `ValueError` (remerkleable's checked add) whether or not that pass
+filled the selection. Fuel is therefore `UInt64.size - i`, the passes the counter has left, so
+the recursion is structural and reaching fuel `0` is that overflow, the `.arithmetic` fault.
+No real state comes near it, but the bound is the spec's own rather than a guess, so a slow
+selection (every candidate at near-zero effective balance) runs to completion as the spec
+does, instead of stopping early with a short result. Tail-recursive, so it compiles to a
+loop. -/
 forkdef cbwsAux [Preset] (indices effBals : Array Nat) (perm : Array ValidatorIndex)
     (seed : ByteArray) (total size : Nat) (shuffle : Bool) :
-    Nat → Nat → ByteArray → Array ValidatorIndex → Array ValidatorIndex
-  | 0,        _, _,          selected => selected
+    Nat → Nat → ByteArray → Array ValidatorIndex → Except StateTransitionError (Array ValidatorIndex)
+  | 0,        _, _,          _        =>
+      throwArithmetic "compute_balance_weighted_selection: i += 1 past 2**64 - 1"
   | fuel + 1, i, randomBytes, selected =>
-      if selected.size ≥ size then selected
+      if selected.size ≥ size then pure selected
       else
         let offset := (i % 16) * 2
         let randomBytes := if offset == 0 then sha (seed ++ uint64ToBytes (UInt64.ofNat (i / 16))) else randomBytes
@@ -130,7 +135,7 @@ forkdef computeBalanceWeightedSelection (state : State) (indices : Array Validat
   let validators := sszGet state validators
   let effBals := indices.map (fun vi => (validators[vi.toNat]!).effectiveBalance.toNat)
   let perm := if shuffle then computeShuffledPermutation total seed else #[]
-  pure (cbwsAux idxNat effBals perm seed total size shuffle 10000000 0 ByteArray.empty #[])
+  cbwsAux idxNat effBals perm seed total size shuffle UInt64.size 0 ByteArray.empty #[]
 
 /-! ## Proposer and sync-committee selection -/
 
