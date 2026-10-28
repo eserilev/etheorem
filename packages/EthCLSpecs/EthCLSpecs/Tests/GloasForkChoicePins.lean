@@ -114,10 +114,10 @@ pinned plain-list read (pyspec `IndexError`), so the epoch step rejects with
 `outOfBounds` and the unguarded pinned `process_slots` means
 `store_target_checkpoint_state` re-throws it (`.transition`) with nothing cached. This
 pins the propagation semantics; the throw site inside epoch processing is incidental. The
-consolidation carrier is deliberate: a bare zero-validator advance does NOT reject,
-it grinds through `cbwsAux`'s 10M-iteration fuel in the proposer lookahead, so the
-reject must land earlier in the epoch pipeline. `State` is FFI-backed (`FastBox`),
-so `native_decide`. -/
+consolidation carrier is deliberate: a bare zero-validator advance rejects later, at
+the selection's `assert total > 0` in the sync-committee, proposer-lookahead, or PTC-window
+substep, an `.assert` rather than the `outOfBounds` this pin matches. `State` is FFI-backed
+(`FastBox`), so `native_decide`. -/
 private def pinTargetAdvanceRejects : Bool :=
   letI : Preset := minimal
   letI : Config := minimalConfig

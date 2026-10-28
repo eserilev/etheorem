@@ -114,47 +114,55 @@ forkdef cbwsAux [Preset] (indices effBals : Array Nat) (perm : Array ValidatorIn
         let selected := if weight ≥ threshold then selected.push (UInt64.ofNat (indices[nextIndex]!)) else selected
         cbwsAux indices effBals perm seed total size shuffle fuel (i + 1) randomBytes selected
 
-/-- `compute_balance_weighted_selection(state, indices, seed, size, shuffle)`. -/
+/-- `compute_balance_weighted_selection(state, indices, seed, size, shuffle)`
+(`gloas/beacon-chain.md:755-787`). An empty `indices` rejects on the spec's
+`assert total > 0` (`:770`). -/
 forkdef computeBalanceWeightedSelection (state : State) (indices : Array ValidatorIndex)
-    (seed : ByteArray) (size : Nat) (shuffle : Bool) : Array ValidatorIndex :=
+    (seed : ByteArray) (size : Nat) (shuffle : Bool) :
+    Except StateTransitionError (Array ValidatorIndex) := do
   let total := indices.size
+  assert (total > 0)
   let idxNat := indices.map (·.toNat)
   let validators := sszGet state validators
   let effBals := indices.map (fun vi => (validators[vi.toNat]!).effectiveBalance.toNat)
   let perm := if shuffle then computeShuffledPermutation total seed else #[]
-  cbwsAux idxNat effBals perm seed total size shuffle 10000000 0 ByteArray.empty #[]
+  pure (cbwsAux idxNat effBals perm seed total size shuffle 10000000 0 ByteArray.empty #[])
 
 /-! ## Proposer and sync-committee selection -/
 
-/-- `compute_proposer_indices`: one balance-weighted proposer per slot in `epoch`. -/
+/-- `compute_proposer_indices`: one balance-weighted proposer per slot in `epoch`. An empty
+`indices` rejects through `computeBalanceWeightedSelection`'s `assert total > 0`. -/
 forkdef computeProposerIndices (state : State) (epoch : Epoch) (seed : Bytes32)
-    (indices : Array ValidatorIndex) : Array ValidatorIndex :=
+    (indices : Array ValidatorIndex) : Except StateTransitionError (Array ValidatorIndex) :=
   let startSlot := computeStartSlotAtEpoch epoch
-  (Array.range Const.slotsPerEpoch).map (fun i =>
+  (Array.range Const.slotsPerEpoch).mapM (fun i => do
     let sd := sha (seed ++ uint64ToBytes (startSlot + UInt64.ofNat i))
-    (computeBalanceWeightedSelection state indices sd 1 true)[0]!)
+    return (← computeBalanceWeightedSelection state indices sd 1 true)[0]!)
 
 /-- `get_beacon_proposer_index`: read the precomputed Fulu lookahead (no shuffle). -/
 forkdef getBeaconProposerIndex (state : State) : ValidatorIndex :=
   vmodGet (sszGet state proposerLookahead) (sszGet state slot) Const.slotsPerEpoch
 
 /-- `get_beacon_proposer_indices(state, epoch)`: the per-slot proposers for `epoch`. -/
-forkdef getBeaconProposerIndices (state : State) (epoch : Epoch) : Array ValidatorIndex :=
+forkdef getBeaconProposerIndices (state : State) (epoch : Epoch) :
+    Except StateTransitionError (Array ValidatorIndex) :=
   computeProposerIndices state epoch (getSeed state epoch Const.domainBeaconProposer)
     (getActiveValidatorIndices state epoch)
 
 /-- `get_next_sync_committee`: balance-weighted selection of the next sync committee,
-with the real BLS `aggregate_pubkey` through the `[CryptoBackend]` seam. -/
-forkdef getNextSyncCommittee [CryptoBackend] (state : State) : SyncCommittee :=
+with the real BLS `aggregate_pubkey` through the `[CryptoBackend]` seam. Rejects when no
+validator is active next epoch, through `computeBalanceWeightedSelection`. -/
+forkdef getNextSyncCommittee [CryptoBackend] (state : State) :
+    Except StateTransitionError SyncCommittee := do
   let epoch := currentEpochOf state + 1
   let seed := getSeed state epoch Const.domainSyncCommittee
-  let indices := computeBalanceWeightedSelection state (getActiveValidatorIndices state epoch)
+  let indices ← computeBalanceWeightedSelection state (getActiveValidatorIndices state epoch)
     seed Const.syncCommitteeSize true
 
   let validators := sszGet state validators
   let pubkeys : Vector BLSPubkey Const.syncCommitteeSize :=
     Vector.ofFn (fun i => (validators[(indices[i.val]!).toNat]?.getD default).pubkey)
-  { pubkeys := pubkeys, aggregatePubkey := blsAggregatePubkeys pubkeys.toArray }
+  return { pubkeys := pubkeys, aggregatePubkey := blsAggregatePubkeys pubkeys.toArray }
 
 end
 
