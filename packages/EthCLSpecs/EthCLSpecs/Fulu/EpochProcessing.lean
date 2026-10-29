@@ -358,12 +358,12 @@ forkdef processEffectiveBalanceUpdates : StateTransition Unit := do
     let balance ← sszGetIdx (sszGet state balances) i
     let below ← checkedAdd balance downward
       "process_effective_balance_updates: balance + DOWNWARD_THRESHOLD"
-    let update ←
+    let update : Bool ←
       if below < validator.effectiveBalance then pure true
       else do
         let above ← checkedAdd validator.effectiveBalance upward
           "process_effective_balance_updates: validator.effective_balance + UPWARD_THRESHOLD"
-        pure (above < balance)
+        pure (decide (above < balance))
     if update then
       let newEff := umin (balance - balance % Const.effectiveBalanceIncrementG) (getMaxEffectiveBalance validator)
       modifyState fun state =>

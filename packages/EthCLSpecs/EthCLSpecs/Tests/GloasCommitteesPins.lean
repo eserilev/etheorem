@@ -36,7 +36,7 @@ private def oneValidatorState (slashed : Bool) : @State minimal fastHasherTag :=
       exitEpoch := Const.farFutureEpoch, withdrawableEpoch := Const.farFutureEpoch }
   SSZ.FastBox
     { (default : @EthCLSpecs.Gloas.BeaconState minimal) with
-      validators := ⟨#[v]⟩, balances := ⟨#[32000000000]⟩ }
+      validators := sszOfArray #[v], balances := sszOfArray #[32000000000] }
 
 /-- An empty `indices` rejects with `.assert`. -/
 private def pinSelectionEmptyRejects : Bool :=
