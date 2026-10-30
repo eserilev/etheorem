@@ -576,10 +576,21 @@ Spec-faithfulness facts worth knowing:
   does not check). The domain is fixed (`compute_domain(DOMAIN_DEPOSIT)`, genesis fork
   version, zero `genesis_validators_root`), so the check is one `[CryptoBackend].verify`.
 - **`initiate_validator_exit` bounds the withdrawable epoch.** It asserts `exit_epoch +
-MIN_VALIDATOR_WITHDRAWABILITY_DELAY < 2^64` before the write, so an over-range case
+  MIN_VALIDATOR_WITHDRAWABILITY_DELAY < 2^64` before the write, so an over-range case
   rejects faithfully (matching the pyspec's `uint64` serialization `ValueError`) instead
   of wrapping silently on Lean's `UInt64`. Valid exits never approach the bound. Gloas
   inherits the substep with no Gloas-side change.
+- **The balance-weighted sampler rejects on an empty candidate set.**
+  `compute_balance_weighted_selection` asserts `total > 0` (`gloas/beacon-chain.md:770`),
+  so proposer sampling, the sync committee, and `compute_ptc` reject with `.assert` when
+  no validator qualifies (zero active, or all slashed under the EIP-8045 filter). No
+  conformance vector reaches the empty case; `Tests/GloasCommitteesPins.lean` pins the
+  three reject sites. At Fulu this is an error-class divergence. The pyspec's Fulu
+  samplers fail differently on empty input. Electra's `get_next_sync_committee_indices`
+  computes `i % active_validator_count` unguarded and raises Python `ZeroDivisionError`.
+  `compute_proposer_index` raises its own `AssertionError`. Etheorem routes the Fulu
+  paths through the same balance-weighted sampler, so every empty-set case rejects with
+  `.assert`. Both sides fail the transition; only the reject class differs.
 - **`process_execution_payload` takes the execution engine as valid.** It checks
   parent-hash / prev-randao / timestamp consistency and caches the header;
   `verify_and_notify_new_payload` is the consumer's responsibility, which is valid for
