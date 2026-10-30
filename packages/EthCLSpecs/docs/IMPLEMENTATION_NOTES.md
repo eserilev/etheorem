@@ -270,8 +270,11 @@ an `Except` query) at the read.
   bucket) rather than masking as a default. This covers the operation reads in a state step
   (`process_attestation`'s participation reads, `process_withdrawal_request`'s balance read,
   the pending-consolidation source reads) and the pure queries that return `Except IndexError`
-  because their index is untrusted or a parameter (`get_base_reward`, `get_attesting_indices`,
-  the reward-delta helpers), whose monadic callers bind them through `liftErr`.
+  because their index is untrusted or a parameter (`get_base_reward`, `get_attesting_indices`),
+  whose monadic callers bind them through `liftErr`. The reward-delta helpers and
+  `get_unslashed_participating_indices` return `Except StateTransitionError`, since they can
+  also raise `.arithmetic`. They read `inactivity_scores` and the participation flags through
+  `sszGetIdx`. Every reachable state keeps these lists at the registry's length.
 - **An index a spec validation checks** is read through `assertH (i < size)`
   (`Spec/Assert.lean`): the assert returns the witness, so the read is the proof-carrying,
   reject-free `vs[i]'h.down`, with no default fallback, the bad index having rejected at the
@@ -591,6 +594,10 @@ Spec-faithfulness facts worth knowing:
   `compute_proposer_index` raises its own `AssertionError`. Etheorem routes the Fulu
   paths through the same balance-weighted sampler, so every empty-set case rejects with
   `.assert`. Both sides fail the transition; only the reject class differs.
+- **Two `uint64` operations in epoch processing are unchecked.** `get_total_balance`'s sum
+  and the epoch-counter increments (`current_epoch + 1` and similar) wrap, where the spec
+  raises `ValueError`. The sum sits in a pure helper with many callers. The increments need a
+  slot near `2^64`. The rest of the epoch substeps' `uint64` arithmetic raises `.arithmetic`.
 - **`process_execution_payload` takes the execution engine as valid.** It checks
   parent-hash / prev-randao / timestamp consistency and caches the header;
   `verify_and_notify_new_payload` is the consumer's responsibility, which is valid for
