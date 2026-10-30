@@ -594,10 +594,12 @@ Spec-faithfulness facts worth knowing:
   `compute_proposer_index` raises its own `AssertionError`. Etheorem routes the Fulu
   paths through the same balance-weighted sampler, so every empty-set case rejects with
   `.assert`. Both sides fail the transition; only the reject class differs.
-- **Two `uint64` operations in epoch processing are unchecked.** `get_total_balance`'s sum
-  and the epoch-counter increments (`current_epoch + 1` and similar) wrap, where the spec
-  raises `ValueError`. The sum sits in a pure helper with many callers. The increments need a
-  slot near `2^64`. The rest of the epoch substeps' `uint64` arithmetic raises `.arithmetic`.
+- **Two kinds of `uint64` operation in epoch processing are unchecked.** `get_total_balance`'s
+  sum and the epoch and slot arithmetic (`current_epoch + 1`, `epoch * SLOTS_PER_EPOCH`, and
+  similar) wrap, where the spec raises `ValueError`. The sum sits in a pure helper with many
+  callers. The epoch and slot arithmetic needs a slot near `2^64`. The balance arithmetic in
+  the other epoch substeps raises `.arithmetic`, `process_pending_deposits`' churn sums
+  among them.
 - **`process_execution_payload` takes the execution engine as valid.** It checks
   parent-hash / prev-randao / timestamp consistency and caches the header;
   `verify_and_notify_new_payload` is the consumer's responsibility, which is valid for

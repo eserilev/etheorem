@@ -194,13 +194,19 @@ forkdef ppdLoop (deposits : Array PendingDeposit) (finalizedSlot avail : Gwei) (
 
     if isWithdrawn then applyPendingDeposit deposit; return advance s.processed s.postpone
     else if isExited then return advance s.processed (s.postpone.push deposit)
-    else if s.processed + deposit.amount > avail then return .done { s with churnReached := true }
-    else applyPendingDeposit deposit; return advance (s.processed + deposit.amount) s.postpone
+    else
+      -- The spec's `processed_amount + deposit.amount` raises on `uint64` overflow.
+      let processed ← checkedAdd s.processed deposit.amount
+        "process_pending_deposits: processed_amount + deposit.amount"
+      if processed > avail then return .done { s with churnReached := true }
+      applyPendingDeposit deposit
+      return advance processed s.postpone
 
 forkdef processPendingDeposits : StateTransition Unit := do
   let state ← get
   let nextEpoch := currentEpochOf state + 1
-  let avail := (sszGet state depositBalanceToConsume) + getActivationChurnLimit state
+  let avail ← checkedAdd (sszGet state depositBalanceToConsume) (getActivationChurnLimit state)
+    "process_pending_deposits: deposit_balance_to_consume + get_activation_churn_limit(state)"
   let finalizedSlot := computeStartSlotAtEpoch (sszGet state finalizedCheckpoint).epoch
   let deposits := (sszGet state pendingDeposits).toArray
 

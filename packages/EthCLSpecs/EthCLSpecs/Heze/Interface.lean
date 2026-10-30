@@ -119,9 +119,9 @@ private def runRewardsImpl (P : Preset) (C : Config) (preBytes : ByteArray) :
   let n := (sszGet state validators).size
   let zeros := Array.replicate n (0 : Gwei)
   RunError.ofSpec do
-    let d0 ← liftErr (getFlagIndexDeltas state 0)
-    let d1 ← liftErr (getFlagIndexDeltas state 1)
-    let d2 ← liftErr (getFlagIndexDeltas state 2)
+    let d0 ← getFlagIndexDeltas state 0
+    let d1 ← getFlagIndexDeltas state 1
+    let d2 ← getFlagIndexDeltas state 2
     pure #[← mkDeltas d0, ← mkDeltas d1, ← mkDeltas d2,
       ← mkDeltas (zeros, ← getInactivityPenaltyDeltas state)]
 

@@ -35,17 +35,19 @@ forkdef weighJustificationAndFinalization (totalActive prevTarget currTarget : G
   let state ← get
   let prevEpoch := previousEpochOf state
   let currEpoch := currentEpochOf state
-  -- The spec's `Gwei` products `* 3` and `* 2` raise on overflow.
-  let totalActive2 ← checkedMul totalActive 2 "weigh_justification_and_finalization: total_active_balance * 2"
+  -- The spec's `Gwei` products `* 3` and `* 2` raise on overflow. They run in the spec's
+  -- order, so `current_target_balance * 3` comes after the previous epoch's root read: a
+  -- failed recency assert there rejects before the current-epoch product can overflow.
   let prevTarget3 ← checkedMul prevTarget 3 "weigh_justification_and_finalization: previous_target_balance * 3"
-  let currTarget3 ← checkedMul currTarget 3 "weigh_justification_and_finalization: current_target_balance * 3"
+  let totalActive2 ← checkedMul totalActive 2 "weigh_justification_and_finalization: total_active_balance * 2"
   let justifyPrev := prevTarget3 ≥ totalActive2
-  let justifyCurr := currTarget3 ≥ totalActive2
   -- `get_block_root` is read ONLY inside its justify branch in the spec (lazy); read
   -- each only when its branch fires, so the recency assert fires exactly where the
   -- spec's read does. An unconditional read would assert on an epoch-boundary pull-up
   -- state whose justify condition is false, a slot the spec never reads there.
   let prevRoot ← if justifyPrev then getBlockRoot state prevEpoch else pure default
+  let currTarget3 ← checkedMul currTarget 3 "weigh_justification_and_finalization: current_target_balance * 3"
+  let justifyCurr := currTarget3 ≥ totalActive2
   let currRoot ← if justifyCurr then getBlockRoot state currEpoch else pure default
   modifyState fun state => Id.run do
     let oldPrev := sszGet state previousJustifiedCheckpoint
@@ -282,15 +284,21 @@ forkdef ppdLoop (deposits : Array PendingDeposit) (finalizedSlot avail : Gwei) (
 
     if isWithdrawn then applyPendingDeposit deposit; return advance s.processed s.postpone
     else if isExited then return advance s.processed (s.postpone.push deposit)
-    else if s.processed + deposit.amount > avail then return .done { s with churnReached := true }
-    else applyPendingDeposit deposit; return advance (s.processed + deposit.amount) s.postpone
+    else
+      -- The spec's `processed_amount + deposit.amount` raises on `uint64` overflow.
+      let processed ← checkedAdd s.processed deposit.amount
+        "process_pending_deposits: processed_amount + deposit.amount"
+      if processed > avail then return .done { s with churnReached := true }
+      applyPendingDeposit deposit
+      return advance processed s.postpone
 
 /-- `process_pending_deposits`. Churn is accumulated into `deposit_balance_to_consume`
 only when the churn limit was actually hit; every other stop resets it to zero. -/
 forkdef processPendingDeposits : StateTransition Unit := do
   let state ← get
   let nextEpoch := currentEpochOf state + 1
-  let avail := (sszGet state depositBalanceToConsume) + getActivationExitChurnLimit state
+  let avail ← checkedAdd (sszGet state depositBalanceToConsume) (getActivationExitChurnLimit state)
+    "process_pending_deposits: deposit_balance_to_consume + get_activation_exit_churn_limit(state)"
   let finalizedSlot := computeStartSlotAtEpoch (sszGet state finalizedCheckpoint).epoch
   let deposits := (sszGet state pendingDeposits).toArray
 
