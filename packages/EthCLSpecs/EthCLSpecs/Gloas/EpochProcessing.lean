@@ -140,7 +140,7 @@ inherit getNextSyncCommittee
 only from *unslashed* active validators. This overrides the inherited Fulu version
 (which has no slashed filter); the inherited `process_proposer_lookahead` below
 late-binds its `getBeaconProposerIndices` call to this Gloas copy. When every active
-validator is slashed the candidate set is empty, and `compute_balance_weighted_selection`'s
+validator is slashed, the candidate set is empty, and `compute_balance_weighted_selection`'s
 `assert total > 0` rejects. -/
 forkdef getBeaconProposerIndices (state : State) (epoch : Epoch) :
     Except StateTransitionError (Array ValidatorIndex) :=
@@ -292,7 +292,7 @@ forkdef computePtc (state : State) (slot : Slot) :
 by `SLOTS_PER_EPOCH` and recompute the last epoch's per-slot PTCs from the snapshot
 state. The window length is `(2 + MIN_SEED_LOOKAHEAD) * SLOTS_PER_EPOCH = 3 *
 SLOTS_PER_EPOCH` (MIN_SEED_LOOKAHEAD = 1). The per-slot PTCs are computed in slot order,
-so the first slot whose `compute_ptc` rejects is the reject that surfaces. -/
+so the run surfaces the first slot whose `compute_ptc` rejects. -/
 forkdef processPtcWindow : StateTransition Unit := do
   let state ← get
   let nextEpoch := currentEpochOf state + Const.minSeedLookahead + 1

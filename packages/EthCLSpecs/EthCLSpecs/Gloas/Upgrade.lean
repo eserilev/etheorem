@@ -59,7 +59,7 @@ matching the `ptcWindow` field's declared length.
 
 Each entry is the `Except` its `compute_ptc` returns, since that call can reject.
 `upgradeToGloas` sequences the entries in index order (`Vector.mapM id`), so the first
-rejecting slot surfaces, the order the spec's list comprehension evaluates them in. -/
+rejecting slot surfaces. That ordering matches the spec's list comprehension. -/
 def initializePtcWindow [Preset] [HasherTag] (state : Fulu.State) :
     Vector (Except StateTransitionError (Vector ValidatorIndex Const.ptcSize))
       (3 * Const.slotsPerEpoch) :=
