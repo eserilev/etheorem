@@ -139,8 +139,11 @@ inherit getNextSyncCommittee
 /-- `get_beacon_proposer_indices` (Gloas, EIP-8045): the proposer lookahead is drawn
 only from *unslashed* active validators. This overrides the inherited Fulu version
 (which has no slashed filter); the inherited `process_proposer_lookahead` below
-late-binds its `getBeaconProposerIndices` call to this Gloas copy. -/
-forkdef getBeaconProposerIndices (state : State) (epoch : Epoch) : Array ValidatorIndex :=
+late-binds its `getBeaconProposerIndices` call to this Gloas copy. When every active
+validator is slashed, the candidate set is empty, and `compute_balance_weighted_selection`'s
+`assert total > 0` rejects. -/
+forkdef getBeaconProposerIndices (state : State) (epoch : Epoch) :
+    Except StateTransitionError (Array ValidatorIndex) :=
   let validators := sszGet state validators
   let indices := (getActiveValidatorIndices state epoch).filter (fun vi => !(validators[vi.toNat]!).slashed)
   computeProposerIndices state epoch (getSeed state epoch Const.domainBeaconProposer) indices
@@ -272,26 +275,30 @@ forkdef processBuilderPendingPayments : StateTransition Unit := do
 /-- `compute_ptc` (v1.7.0-alpha.11, EIP-7732): the payload-timeliness committee for
 `slot`, with possible duplicates. Concatenate every beacon committee for the slot in
 order, then take a `PTC_SIZE` balance-weighted selection with no shuffle. The seed
-mixes `DOMAIN_PTC_ATTESTER` and the slot. -/
-forkdef computePtc (state : State) (slot : Slot) : Vector ValidatorIndex Const.ptcSize :=
+mixes `DOMAIN_PTC_ATTESTER` and the slot. A slot whose committees are all empty (fewer
+active validators than `SLOTS_PER_EPOCH`) rejects through
+`compute_balance_weighted_selection`'s `assert total > 0`. -/
+forkdef computePtc (state : State) (slot : Slot) :
+    Except StateTransitionError (Vector ValidatorIndex Const.ptcSize) := do
   let epoch := computeEpochAtSlot slot
   let seed := sha ((getSeed state epoch Const.domainPtcAttester) ++ uint64ToBytes slot)
   let committeesPerSlot := getCommitteeCountPerSlot state epoch
   let indices := (Array.range committeesPerSlot).foldl
     (fun acc i => acc ++ getBeaconCommittee state slot i) (#[] : Array ValidatorIndex)
-  let sel := computeBalanceWeightedSelection state indices seed Const.ptcSize false
-  Vector.ofFn (fun i : Fin Const.ptcSize => sel[i.val]!)
+  let sel ← computeBalanceWeightedSelection state indices seed Const.ptcSize false
+  return Vector.ofFn (fun i : Fin Const.ptcSize => sel[i.val]!)
 
 /-- `process_ptc_window` (v1.7.0-alpha.11, EIP-7732): shift the cached PTC window down
 by `SLOTS_PER_EPOCH` and recompute the last epoch's per-slot PTCs from the snapshot
 state. The window length is `(2 + MIN_SEED_LOOKAHEAD) * SLOTS_PER_EPOCH = 3 *
-SLOTS_PER_EPOCH` (MIN_SEED_LOOKAHEAD = 1). -/
+SLOTS_PER_EPOCH` (MIN_SEED_LOOKAHEAD = 1). The per-slot PTCs are computed in slot order,
+so the run surfaces the first slot whose `compute_ptc` rejects. -/
 forkdef processPtcWindow : StateTransition Unit := do
   let state ← get
   let nextEpoch := currentEpochOf state + Const.minSeedLookahead + 1
   let startSlot := computeStartSlotAtEpoch nextEpoch
-  let fresh : Array (Vector ValidatorIndex Const.ptcSize) :=
-    (Array.range Const.slotsPerEpoch).map (fun i => computePtc state (startSlot + UInt64.ofNat i))
+  let fresh : Array (Vector ValidatorIndex Const.ptcSize) ← liftErr
+    ((Array.range Const.slotsPerEpoch).mapM (fun i => computePtc state (startSlot + UInt64.ofNat i)))
 
   modifyState fun state =>
     sszUpdate state with ptcWindow :=
