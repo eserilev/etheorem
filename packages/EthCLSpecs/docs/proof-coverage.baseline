@@ -46,6 +46,7 @@ tier2 EthCLSpecs.Gloas.convertBuilderIndexToValidatorIndex
 tier2 EthCLSpecs.Gloas.initiateBuilderExit
 tier2 EthCLSpecs.Gloas.isValidIndexedPayloadAttestation
 tier2 EthCLSpecs.Gloas.processBuilderPendingPayments
+tier2 EthCLSpecs.Gloas.processDepositRequest
 tier2 EthCLSpecs.Gloas.processOperations
 tier2 EthCLSpecs.Gloas.toBuilderIndex
 tier2 EthCLSpecs.Gloas.updateCheckpoints
