@@ -36,7 +36,7 @@ forkdef weighJustificationAndFinalization (totalActive prevTarget currTarget : G
   let prevEpoch := previousEpochOf state
   let currEpoch := currentEpochOf state
   -- The spec's `Gwei` products `* 3` and `* 2` raise on overflow. They run in the spec's
-  -- order, so `current_target_balance * 3` comes after the previous epoch's root read: a
+  -- order, so `current_target_balance * 3` comes after the previous epoch's root read. A
   -- failed recency assert there rejects before the current-epoch product can overflow.
   let prevTarget3 ← checkedMul prevTarget 3 "weigh_justification_and_finalization: previous_target_balance * 3"
   let totalActive2 ← checkedMul totalActive 2 "weigh_justification_and_finalization: total_active_balance * 2"
@@ -122,7 +122,7 @@ forkdef processInactivityUpdates : StateTransition Unit := do
 /-- `get_flag_index_deltas` for one flag: `(rewards, penalties)` per validator. A bad
 validator index rejects (`getBaseReward`, the participation read). The `uint64` products
 `base_reward * weight` and `base_reward * weight * unslashed_participating_increments` raise
-`.arithmetic` on overflow. -/
+`.arithmetic` on overflow, in the branches where the spec computes them. -/
 forkdef getFlagIndexDeltas (state : State) (flagIndex : Nat) :
     Except StateTransitionError (Array Gwei × Array Gwei) := do
   let n := (sszGet state validators).size
@@ -139,22 +139,25 @@ forkdef getFlagIndexDeltas (state : State) (flagIndex : Nat) :
   for vi in getEligibleValidatorIndices state do
     let i := vi.toNat
     let baseReward ← liftErr (getBaseReward state vi)
-    -- `base_reward * weight`, shared by both branches.
-    let weighted ← checkedMul (UInt64.ofNat baseReward) (UInt64.ofNat weight)
-      "get_flag_index_deltas: base_reward * weight"
+    -- Each branch multiplies `base_reward * weight` itself, as the spec does. A participant in
+    -- a leak and a head-flag non-participant compute no product, so neither can overflow.
     if unslashed.contains vi then
       if !leak then
+        let weighted ← checkedMul (UInt64.ofNat baseReward) (UInt64.ofNat weight)
+          "get_flag_index_deltas: base_reward * weight"
         let rewardNumerator ← checkedMul weighted (UInt64.ofNat unslashedIncrements)
           "get_flag_index_deltas: base_reward * weight * unslashed_participating_increments"
         rewards := rewards.set! i (UInt64.ofNat (rewardNumerator.toNat / (activeIncrements * Const.weightDenominator)))
     else if flagIndex != Const.timelyHeadFlagIndex then
+      let weighted ← checkedMul (UInt64.ofNat baseReward) (UInt64.ofNat weight)
+        "get_flag_index_deltas: base_reward * weight"
       penalties := penalties.set! i (UInt64.ofNat (weighted.toNat / Const.weightDenominator))
   return (rewards, penalties)
 
 /-- `get_inactivity_penalty_deltas`: penalties only. Rejects with `.outOfBounds` when
 `inactivity_scores` is shorter than the registry, and with `.arithmetic` when the `uint64`
 product `effective_balance * inactivity_scores[index]` overflows
-(`bellatrix/beacon-chain.md:247-249`). -/
+(`bellatrix/beacon-chain.md:304-306`). -/
 forkdef getInactivityPenaltyDeltas (state : State) : Except StateTransitionError (Array Gwei) := do
   let validators := sszGet state validators
   let iscores := sszGet state inactivityScores

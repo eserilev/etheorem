@@ -26,7 +26,7 @@ forkdef getTotalActiveBalance (state : State) : Gwei :=
 
 /-- `get_unslashed_participating_indices(state, flag_index, epoch)`. No committees. A
 participation list shorter than the registry rejects with `.outOfBounds`, the spec's
-`IndexError` on `epoch_participation[i]` (`altair/beacon-chain.md:351`). -/
+`IndexError` on `epoch_participation[i]` (`altair/beacon-chain.md:412`). -/
 forkdef getUnslashedParticipatingIndices (state : State) (flagIndex : Nat) (epoch : Epoch) :
     Except StateTransitionError (Array ValidatorIndex) := do
   let isCurrent := epoch == computeEpochAtSlot (sszGet state slot)
