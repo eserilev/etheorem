@@ -35,13 +35,23 @@ forkdef weighJustificationAndFinalization (totalActive prevTarget currTarget : G
   let state ← get
   let prevEpoch := previousEpochOf state
   let currEpoch := currentEpochOf state
-  let justifyPrev := prevTarget.toNat * 3 ≥ totalActive.toNat * 2
-  let justifyCurr := currTarget.toNat * 3 ≥ totalActive.toNat * 2
+  -- The spec's `Gwei` products `* 3` and `* 2` raise on overflow
+  -- (`phase0/beacon-chain.md:1978`, `:1983`). They run in the spec's order, so
+  -- `current_epoch_target_balance * 3` comes after the previous epoch's root read. A failed
+  -- recency assert there rejects before the current-epoch product can overflow.
+  let prevTarget3 ← checkedMul prevTarget 3
+    "weigh_justification_and_finalization: previous_epoch_target_balance * 3"
+  let totalActive2 ← checkedMul totalActive 2
+    "weigh_justification_and_finalization: total_active_balance * 2"
+  let justifyPrev := prevTarget3 ≥ totalActive2
   -- `get_block_root` is read ONLY inside its justify branch in the spec (lazy); read
   -- each only when its branch fires, so the recency assert fires exactly where the
   -- spec's read does. An unconditional read would assert on an epoch-boundary pull-up
   -- state whose justify condition is false, a slot the spec never reads there.
   let prevRoot ← if justifyPrev then getBlockRoot state prevEpoch else pure default
+  let currTarget3 ← checkedMul currTarget 3
+    "weigh_justification_and_finalization: current_epoch_target_balance * 3"
+  let justifyCurr := currTarget3 ≥ totalActive2
   let currRoot ← if justifyCurr then getBlockRoot state currEpoch else pure default
   modifyState fun state => Id.run do
     let oldPrev := sszGet state previousJustifiedCheckpoint
@@ -62,7 +72,8 @@ forkdef weighJustificationAndFinalization (totalActive prevTarget currTarget : G
         currentJustifiedCheckpoint := { epoch := currEpoch, root := currRoot },
         justificationBits := bitSet (sszGet state justificationBits) 0 true
 
-    -- Finalize on the four supermajority-link bit patterns.
+    -- Finalize on the four supermajority-link bit patterns. The `epoch + k` sums wrap here,
+    -- where the spec's sums raise (`phase0/beacon-chain.md:1992-2001`); see `IMPLEMENTATION_NOTES.md`.
     let bits := sszGet state justificationBits
     if bitGet bits 1 && bitGet bits 2 && bitGet bits 3 && oldPrev.epoch + 3 == currEpoch then
       state := sszUpdate state with finalizedCheckpoint := oldPrev
@@ -79,8 +90,8 @@ forkdef processJustificationAndFinalization : StateTransition Unit := do
   let state ← get
   if currentEpochOf state ≤ Const.genesisEpoch + 1 then pure ()
   else
-    let prevIdx := getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (previousEpochOf state)
-    let currIdx := getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (currentEpochOf state)
+    let prevIdx ← liftErr (getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (previousEpochOf state))
+    let currIdx ← liftErr (getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (currentEpochOf state))
     weighJustificationAndFinalization (getTotalActiveBalance state)
       (getTotalBalance state prevIdx) (getTotalBalance state currIdx)
 
@@ -89,64 +100,94 @@ forkdef processJustificationAndFinalization : StateTransition Unit := do
 /-- `process_inactivity_updates` (`altair/beacon-chain.md`): a timely-target voter's score
 drops by one, any other eligible validator's rises by `INACTIVITY_SCORE_BIAS`, and outside a
 leak every score drops by `INACTIVITY_SCORE_RECOVERY_RATE`. Both drops are the spec's
-`saturating_sub`, floored at zero. -/
+`saturating_sub`, floored at zero. Rejects with `.outOfBounds` when `inactivity_scores` or the
+previous participation list is shorter than the registry, and with `.arithmetic` when
+`+= INACTIVITY_SCORE_BIAS` overflows `uint64` (`altair/beacon-chain.md:766`) or the finality
+delay underflows. The spec evaluates `is_in_inactivity_leak` per eligible validator, after
+that validator's score update (`altair/beacon-chain.md:768`), so the loop does too. -/
 forkdef processInactivityUpdates : StateTransition Unit := do
   let state ← get
   if currentEpochOf state == Const.genesisEpoch then pure ()
   else
-    let matchingTarget := getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (previousEpochOf state)
-    let leak := isInInactivityLeak state
+    let matchingTarget ← liftErr
+      (getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (previousEpochOf state))
     let eligible := getEligibleValidatorIndices state
 
-    modifyState fun state => Id.run do
-      let mut state := state
-      for vi in eligible do
-        let i := vi.toNat
-        state := sszModify state inactivityScores[i]! as cur =>
-          let cur := if matchingTarget.contains vi then saturatingSub cur 1 else cur + Const.inactivityScoreBias
-          if !leak then saturatingSub cur Const.inactivityScoreRecoveryRate else cur
-      return state
+    for vi in eligible do
+      let i := vi.toNat
+      let cur ← sszGetIdx (sszGet (← get) inactivityScores) i
+      let cur ←
+        if matchingTarget.contains vi then pure (saturatingSub cur 1)
+        else checkedAdd cur Const.inactivityScoreBias
+               "process_inactivity_updates: inactivity_scores[index] += INACTIVITY_SCORE_BIAS"
+      -- `state` is the pre-loop state. The loop writes only `inactivity_scores`, so the leak
+      -- answer is the one the spec reads at this point.
+      let leak ← liftErr (isInInactivityLeak state)
+      let cur := if !leak then saturatingSub cur Const.inactivityScoreRecoveryRate else cur
+      modifyState fun state => sszUpdate state with inactivityScores[i]! := cur
 
 /-! ## Rewards & penalties -/
 
-/-- `get_flag_index_deltas` for one flag: `(rewards, penalties)` per validator. Returns
-`Except IndexError` because `getBaseReward` does; a bad validator index rejects rather than
-masking. -/
-forkdef getFlagIndexDeltas (state : State) (flagIndex : Nat) : Except IndexError (Array Gwei × Array Gwei) := do
+/-- `get_flag_index_deltas` for one flag: `(rewards, penalties)` per validator. A bad
+validator index rejects (`getBaseReward`, the participation read). The `uint64` products
+`base_reward * weight` and `base_reward * weight * unslashed_participating_increments` raise
+`.arithmetic` on overflow, in the branches where the spec computes them
+(`altair/beacon-chain.md:481`, `:484`). The finality delay's underflow raises only where the
+spec calls `is_in_inactivity_leak`: inside the participant branch, after that validator's
+`get_base_reward` (`altair/beacon-chain.md:480`). -/
+forkdef getFlagIndexDeltas (state : State) (flagIndex : Nat) :
+    Except StateTransitionError (Array Gwei × Array Gwei) := do
   let n := (sszGet state validators).size
   let mut rewards := Array.replicate n (0 : Gwei)
   let mut penalties := Array.replicate n (0 : Gwei)
 
   let prevEpoch := previousEpochOf state
-  let unslashed := getUnslashedParticipatingIndices state flagIndex prevEpoch
+  let unslashed ← liftErr (getUnslashedParticipatingIndices state flagIndex prevEpoch)
   let weight := Const.participationFlagWeights[flagIndex]!
   let unslashedIncrements := (getTotalBalance state unslashed).toNat / Const.effectiveBalanceIncrement
   let activeIncrements := (getTotalActiveBalance state).toNat / Const.effectiveBalanceIncrement
-  let leak := isInInactivityLeak state
 
   for vi in getEligibleValidatorIndices state do
     let i := vi.toNat
-    let baseReward ← getBaseReward state vi
+    let baseReward ← liftErr (getBaseReward state vi)
+    -- Each branch multiplies `base_reward * weight` itself, following the spec's operation
+    -- order. That product alone stays below `2**64`. `base_reward` is at most about `3.7e16`,
+    -- an effective balance of `2**64 - 1` over the one-increment floor of the total, and
+    -- `weight` is at most 26. Only the three-factor product can overflow. The same bound makes
+    -- `UInt64.ofNat baseReward` exact, though `getBaseReward` returns a `Nat`.
     if unslashed.contains vi then
+      let leak ← isInInactivityLeak state
       if !leak then
-        rewards := rewards.set! i (UInt64.ofNat (baseReward * weight * unslashedIncrements / (activeIncrements * Const.weightDenominator)))
+        let weighted ← checkedMul (UInt64.ofNat baseReward) (UInt64.ofNat weight)
+          "get_flag_index_deltas: base_reward * weight"
+        let rewardNumerator ← checkedMul weighted (UInt64.ofNat unslashedIncrements)
+          "get_flag_index_deltas: base_reward * weight * unslashed_participating_increments"
+        rewards := rewards.set! i (UInt64.ofNat (rewardNumerator.toNat / (activeIncrements * Const.weightDenominator)))
     else if flagIndex != Const.timelyHeadFlagIndex then
-      penalties := penalties.set! i (UInt64.ofNat (baseReward * weight / Const.weightDenominator))
+      let weighted ← checkedMul (UInt64.ofNat baseReward) (UInt64.ofNat weight)
+        "get_flag_index_deltas: base_reward * weight"
+      penalties := penalties.set! i (UInt64.ofNat (weighted.toNat / Const.weightDenominator))
   return (rewards, penalties)
 
-/-- `get_inactivity_penalty_deltas`: penalties only. -/
-forkdef getInactivityPenaltyDeltas (state : State) : Array Gwei := Id.run do
+/-- `get_inactivity_penalty_deltas`: penalties only. Rejects with `.outOfBounds` when
+`inactivity_scores` is shorter than the registry, and with `.arithmetic` when the `uint64`
+product `effective_balance * inactivity_scores[index]` overflows
+(`bellatrix/beacon-chain.md:304-306`). -/
+forkdef getInactivityPenaltyDeltas (state : State) : Except StateTransitionError (Array Gwei) := do
   let validators := sszGet state validators
   let iscores := sszGet state inactivityScores
   let mut penalties := Array.replicate validators.size (0 : Gwei)
-  let matchingTarget := getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (previousEpochOf state)
+  let matchingTarget ← liftErr
+    (getUnslashedParticipatingIndices state Const.timelyTargetFlagIndex (previousEpochOf state))
 
   for vi in getEligibleValidatorIndices state do
     let i := vi.toNat
     if !matchingTarget.contains vi then
-      let num := (validators[i]!).effectiveBalance.toNat * (iscores[i]!).toNat
+      let score ← sszGetIdx iscores i
+      let num ← checkedMul (validators[i]!).effectiveBalance score
+        "get_inactivity_penalty_deltas: effective_balance * inactivity_scores[index]"
       let denom := Const.inactivityScoreBias.toNat * Const.inactivityPenaltyQuotientBellatrix
-      penalties := penalties.set! i (UInt64.ofNat (num / denom))
+      penalties := penalties.set! i (UInt64.ofNat (num.toNat / denom))
   return penalties
 
 /-- Apply per-validator `(rewards, penalties)` to balances. `increaseBalance` rejects on a
@@ -165,7 +206,7 @@ forkdef processRewardsAndPenalties : StateTransition Unit := do
   if currentEpochOf state == Const.genesisEpoch then pure ()
   else
     let flagDeltas ← liftErr ((List.range 3).mapM (fun f => getFlagIndexDeltas state f))
-    let inactPenalties := getInactivityPenaltyDeltas state
+    let inactPenalties ← liftErr (getInactivityPenaltyDeltas state)
     let zeros := Array.replicate (sszGet state validators).size (0 : Gwei)
 
     for (rewards, penalties) in flagDeltas do
@@ -198,8 +239,12 @@ forkdef processSlashings : StateTransition Unit := do
   let state ← get
   let epoch := currentEpochOf state
   let totalBalance := getTotalActiveBalance state
-  let sumSlashings := (sszGet state slashings).toArray.foldl (· + ·) (0 : Gwei)
-  let adjusted := umin (sumSlashings * UInt64.ofNat Const.proportionalSlashingMultiplierBellatrix) totalBalance
+  -- The spec's `uint64` sum and product each raise on overflow (`electra/beacon-chain.md:1086`).
+  let sumSlashings ← (sszGet state slashings).toArray.foldlM
+    (fun acc s => checkedAdd acc s "process_slashings: sum(state.slashings)") (0 : Gwei)
+  let scaled ← checkedMul sumSlashings (UInt64.ofNat Const.proportionalSlashingMultiplierBellatrix)
+    "process_slashings: sum(state.slashings) * PROPORTIONAL_SLASHING_MULTIPLIER_BELLATRIX"
+  let adjusted := umin scaled totalBalance
   let increment := Const.effectiveBalanceIncrementG
   let penaltyPerIncrement := adjusted / (totalBalance / increment)
 
@@ -207,7 +252,11 @@ forkdef processSlashings : StateTransition Unit := do
   for i in [0 : (sszGet state validators).size] do
     let validator := sszGet state validators[i]!
     if validator.slashed && epoch + (UInt64.ofNat Const.epochsPerSlashingsVector / 2) == validator.withdrawableEpoch then
-      state ← decreaseBalance state (UInt64.ofNat i) (penaltyPerIncrement * (validator.effectiveBalance / increment))
+      -- `electra/beacon-chain.md:1101`. A slashed validator that is no longer active keeps its
+      -- effective balance out of `total_balance`, so this product can overflow.
+      let penalty ← checkedMul penaltyPerIncrement (validator.effectiveBalance / increment)
+        "process_slashings: penalty_per_effective_balance_increment * effective_balance_increments"
+      state ← decreaseBalance state (UInt64.ofNat i) penalty
   set state
 
 /-! ## Pending deposits (Electra deposit queue) -/
@@ -263,16 +312,29 @@ forkdef ppdLoop (deposits : Array PendingDeposit) (finalizedSlot avail : Gwei) (
 
     if isWithdrawn then applyPendingDeposit deposit; return advance s.processed s.postpone
     else if isExited then return advance s.processed (s.postpone.push deposit)
-    else if s.processed + deposit.amount > avail then return .done { s with churnReached := true }
-    else applyPendingDeposit deposit; return advance (s.processed + deposit.amount) s.postpone
+    else
+      -- The spec's `processed_amount + deposit.amount` raises on `uint64` overflow
+      -- (`fulu/beacon-chain.md:452`).
+      let processed ← checkedAdd s.processed deposit.amount
+        "process_pending_deposits: processed_amount + deposit.amount"
+      if processed > avail then return .done { s with churnReached := true }
+      applyPendingDeposit deposit
+      return advance processed s.postpone
 
 /-- `process_pending_deposits`. Churn is accumulated into `deposit_balance_to_consume`
-only when the churn limit was actually hit; every other stop resets it to zero. -/
+only when the churn limit was actually hit; every other stop resets it to zero. The churn sum
+(`fulu/beacon-chain.md:417`) and `compute_start_slot_at_epoch`'s product on the finalized
+epoch (`fulu/beacon-chain.md:424`, `phase0/beacon-chain.md:1350`) raise `.arithmetic` on
+overflow, in that order. The product is spelled out here, because `computeStartSlotAtEpoch`
+returns a bare `Slot` and has many callers. -/
 forkdef processPendingDeposits : StateTransition Unit := do
   let state ← get
   let nextEpoch := currentEpochOf state + 1
-  let avail := (sszGet state depositBalanceToConsume) + getActivationExitChurnLimit state
-  let finalizedSlot := computeStartSlotAtEpoch (sszGet state finalizedCheckpoint).epoch
+  let avail ← checkedAdd (sszGet state depositBalanceToConsume) (getActivationExitChurnLimit state)
+    "process_pending_deposits: deposit_balance_to_consume + get_activation_exit_churn_limit(state)"
+  let finalizedSlot ← checkedMul (sszGet state finalizedCheckpoint).epoch
+    (UInt64.ofNat Const.slotsPerEpoch)
+    "process_pending_deposits: compute_start_slot_at_epoch(state.finalized_checkpoint.epoch)"
   let deposits := (sszGet state pendingDeposits).toArray
 
   let scan ← ppdLoop deposits finalizedSlot avail nextEpoch
@@ -325,21 +387,31 @@ forkdef processPendingConsolidations : StateTransition Unit := do
 
 /-! ## Effective-balance updates -/
 
-/-- `process_effective_balance_updates` (the hysteresis rule). -/
-forkdef processEffectiveBalanceUpdates : StateTransition Unit :=
-  modifyState fun state => Id.run do
-    let mut state := state
-    let hysteresisIncrement := Const.effectiveBalanceIncrementG / UInt64.ofNat Const.hysteresisQuotient
-    let downward := hysteresisIncrement * UInt64.ofNat Const.hysteresisDownwardMultiplier
-    let upward := hysteresisIncrement * UInt64.ofNat Const.hysteresisUpwardMultiplier
+/-- `process_effective_balance_updates` (the hysteresis rule). Rejects with `.outOfBounds`
+when `balances` is shorter than `validators`, and with `.arithmetic` when a threshold sum
+overflows `uint64`. The second sum runs only when the first comparison fails, as the spec's
+`or` short-circuits (`electra/beacon-chain.md:1249-1250`). -/
+forkdef processEffectiveBalanceUpdates : StateTransition Unit := do
+  let hysteresisIncrement := Const.effectiveBalanceIncrementG / UInt64.ofNat Const.hysteresisQuotient
+  let downward := hysteresisIncrement * UInt64.ofNat Const.hysteresisDownwardMultiplier
+  let upward := hysteresisIncrement * UInt64.ofNat Const.hysteresisUpwardMultiplier
 
-    for i in [0 : (sszGet state validators).size] do
-      let validator := sszGet state validators[i]!
-      let balance := sszGet state balances[i]!
-      if balance + downward < validator.effectiveBalance || validator.effectiveBalance + upward < balance then
-        let newEff := umin (balance - balance % Const.effectiveBalanceIncrementG) (getMaxEffectiveBalance validator)
-        state := modValidator state (UInt64.ofNat i) (fun validator => { validator with effectiveBalance := newEff })
-    return state
+  for i in [0 : (sszGet (← get) validators).size] do
+    let state ← get
+    let validator := sszGet state validators[i]!
+    let balance ← sszGetIdx (sszGet state balances) i
+    let below ← checkedAdd balance downward
+      "process_effective_balance_updates: balance + DOWNWARD_THRESHOLD"
+    let update ←
+      if below < validator.effectiveBalance then pure true
+      else do
+        let above ← checkedAdd validator.effectiveBalance upward
+          "process_effective_balance_updates: validator.effective_balance + UPWARD_THRESHOLD"
+        pure (above < balance)
+    if update then
+      let newEff := umin (balance - balance % Const.effectiveBalanceIncrementG) (getMaxEffectiveBalance validator)
+      modifyState fun state =>
+        modValidator state (UInt64.ofNat i) (fun validator => { validator with effectiveBalance := newEff })
 
 /-- `process_slashings_reset`: zero the next epoch's slashings slot. The index is in
 range by construction (`nextEpoch % EPOCHS_PER_SLASHINGS_VECTOR`), so the infallible

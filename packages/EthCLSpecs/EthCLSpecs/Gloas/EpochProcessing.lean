@@ -243,14 +243,26 @@ forkdef ppdLoop (deposits : Array PendingDeposit) (finalizedSlot avail : Gwei) (
 
     if isWithdrawn then applyPendingDeposit deposit; return advance s.processed s.postpone
     else if isExited then return advance s.processed (s.postpone.push deposit)
-    else if s.processed + deposit.amount > avail then return .done { s with churnReached := true }
-    else applyPendingDeposit deposit; return advance (s.processed + deposit.amount) s.postpone
+    else
+      -- The spec's `processed_amount + deposit.amount` raises on `uint64` overflow
+      -- (`gloas/beacon-chain.md:1696`).
+      let processed ← checkedAdd s.processed deposit.amount
+        "process_pending_deposits: processed_amount + deposit.amount"
+      if processed > avail then return .done { s with churnReached := true }
+      applyPendingDeposit deposit
+      return advance processed s.postpone
 
+/-- `process_pending_deposits`. The churn sum (`gloas/beacon-chain.md:1663`) and the finalized
+epoch's start-slot product (`gloas/beacon-chain.md:1668`) raise `.arithmetic` on overflow, as
+in Fulu's. -/
 forkdef processPendingDeposits : StateTransition Unit := do
   let state ← get
   let nextEpoch := currentEpochOf state + 1
-  let avail := (sszGet state depositBalanceToConsume) + getActivationChurnLimit state
-  let finalizedSlot := computeStartSlotAtEpoch (sszGet state finalizedCheckpoint).epoch
+  let avail ← checkedAdd (sszGet state depositBalanceToConsume) (getActivationChurnLimit state)
+    "process_pending_deposits: deposit_balance_to_consume + get_activation_churn_limit(state)"
+  let finalizedSlot ← checkedMul (sszGet state finalizedCheckpoint).epoch
+    (UInt64.ofNat Const.slotsPerEpoch)
+    "process_pending_deposits: compute_start_slot_at_epoch(state.finalized_checkpoint.epoch)"
   let deposits := (sszGet state pendingDeposits).toArray
 
   let scan ← ppdLoop deposits finalizedSlot avail nextEpoch

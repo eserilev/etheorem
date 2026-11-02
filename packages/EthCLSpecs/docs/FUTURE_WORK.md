@@ -16,9 +16,9 @@ range by construction but does not yet carry the proof. A proof over one of thes
 through the `Inhabited` default rather than a bounded lookup. The shapes:
 
 - **Pure data-derived index reads.** The foundational accessors and index-list consumers:
-  `getTotalBalance`, `getTotalActiveBalance`, `getActiveValidatorIndices`,
-  `getUnslashedParticipatingIndices`, `getInactivityPenaltyDeltas`, and the committee and
-  weighted-selection helpers. The index is a parameter or a validated list. Approach A or B
+  `getTotalBalance`, `getTotalActiveBalance`, `getActiveValidatorIndices`, the
+  `validators[i]!` read in `getUnslashedParticipatingIndices` and `getInactivityPenaltyDeltas`,
+  and the committee and weighted-selection helpers. The index is a parameter or a validated list. Approach A or B
   below, and the invariant lemmas they rest on.
 - **Loop and fold bodies.** Reads inside `for i in [0:n]`, `.foldl`, `.map`, `.all` over an
   array's own indices, where `i < n` holds but sits out of scope. The iteration carries the

@@ -29,14 +29,18 @@ forkdef getBaseReward (state : State) (i : ValidatorIndex) : Except IndexError N
   let v ← sszGetIdx (sszGet state validators) i.toNat
   pure ((v.effectiveBalance.toNat / Const.effectiveBalanceIncrement) * getBaseRewardPerIncrement state)
 
-/-- `get_finality_delay`. -/
-forkdef getFinalityDelay (state : State) : Epoch :=
-  let prevEpoch := previousEpochOf state
-  prevEpoch - (sszGet state finalizedCheckpoint).epoch
+/-- `get_finality_delay` (`phase0/beacon-chain.md:2028`). The spec's `Epoch` subtraction
+raises `ValueError` when the finalized epoch is past the previous epoch, so `checkedSub`
+rejects that state with `.arithmetic`. -/
+forkdef getFinalityDelay (state : State) : Except StateTransitionError Epoch :=
+  checkedSub (previousEpochOf state) (sszGet state finalizedCheckpoint).epoch
+    "get_finality_delay: get_previous_epoch(state) - state.finalized_checkpoint.epoch"
 
-/-- `is_in_inactivity_leak`. -/
-forkdef isInInactivityLeak (state : State) : Bool :=
-  getFinalityDelay state > Const.minEpochsToInactivityPenalty
+/-- `is_in_inactivity_leak`. It inherits `getFinalityDelay`'s `.arithmetic` reject, so a
+caller binds it where the spec calls it. -/
+forkdef isInInactivityLeak (state : State) : Except StateTransitionError Bool := do
+  let delay ← getFinalityDelay state
+  return decide (delay > Const.minEpochsToInactivityPenalty)
 
 end
 
