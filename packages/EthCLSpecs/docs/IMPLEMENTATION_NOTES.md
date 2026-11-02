@@ -277,11 +277,11 @@ an `Except` query) at the read.
   bucket) rather than masking as a default. This covers the operation reads in a state step
   (`process_attestation`'s participation reads, `process_withdrawal_request`'s balance read,
   the pending-consolidation source reads) and the pure queries that return `Except IndexError`
-  because their index is untrusted or a parameter (`get_base_reward`, `get_attesting_indices`),
-  whose monadic callers bind them through `liftErr`. The reward-delta helpers and
-  `get_unslashed_participating_indices` return `Except StateTransitionError`, since they can
-  also raise `.arithmetic`. They read `inactivity_scores` and the participation flags through
-  `sszGetIdx`. Every reachable state keeps these lists at the registry's length.
+  because their index is untrusted or a parameter (`get_base_reward`, `get_attesting_indices`,
+  `get_unslashed_participating_indices`), whose monadic callers bind them through `liftErr`.
+  The reward-delta helpers and `is_in_inactivity_leak` return `Except StateTransitionError`,
+  since they can also raise `.arithmetic`. The participation flags and `inactivity_scores` go
+  through `sszGetIdx`. Every reachable state keeps these lists at the registry's length.
 - **An index a spec validation checks** is read through `assertH (i < size)`
   (`Spec/Assert.lean`): the assert returns the witness, so the read is the proof-carrying,
   reject-free `vs[i]'h.down`, with no default fallback, the bad index having rejected at the
@@ -618,12 +618,30 @@ Spec-faithfulness facts worth knowing:
   `compute_proposer_index` raises its own `AssertionError`. Etheorem routes the Fulu
   paths through the same balance-weighted sampler, so every empty-set case rejects with
   `.assert`. Both sides fail the transition; only the reject class differs.
-- **Two kinds of `uint64` operation in epoch processing are unchecked.** `get_total_balance`'s
-  sum and the epoch and slot arithmetic (`current_epoch + 1`, `epoch * SLOTS_PER_EPOCH`, and
-  similar) wrap, where the spec raises `ValueError`. The sum sits in a pure helper with many
-  callers. The epoch and slot arithmetic needs a slot near `2^64`. The balance arithmetic in
-  the other epoch substeps raises `.arithmetic`, `process_pending_deposits`' churn sums
-  among them.
+- **Some `uint64` operations in epoch processing are unchecked.** Each wraps where the spec
+  raises `ValueError`. Four groups remain:
+  - `get_total_balance`'s sum (`phase0/beacon-chain.md:1568`). It sits in a pure helper with
+    many callers.
+  - The finalization sums `old_previous_justified_checkpoint.epoch + 3` and `+ 2`, and
+    `old_current_justified_checkpoint.epoch + 2` and `+ 1`
+    (`phase0/beacon-chain.md:1992-2001`). A checkpoint field reaches them, so no slot near
+    `2^64` is needed. They sit in the pure state update of
+    `weighJustificationAndFinalization`, behind the spec's short-circuit `and`.
+  - `compute_exit_epoch_and_update_churn`'s `earliest_exit_epoch += additional_epochs` and
+    its churn product (`electra/beacon-chain.md:935-936`), and the consolidation copy
+    (`:965-966`), in the pure `reserveChurn`. `earliest_exit_epoch` is a state field, so
+    `process_registry_updates` reaches the sum through an ejection.
+  - The epoch arithmetic on the current slot: `current_epoch + 1`,
+    `epoch * SLOTS_PER_EPOCH` in `get_block_root`, `epoch + EPOCHS_PER_SLASHINGS_VECTOR // 2`.
+    These need a slot near `2^64`.
+
+  The rest raises `.arithmetic`: the balance arithmetic in the epoch substeps,
+  `process_pending_deposits`' churn sums, and `compute_start_slot_at_epoch` on the finalized
+  epoch (`fulu/beacon-chain.md:424`, `gloas/beacon-chain.md:1668`).
+  `get_finality_delay`'s subtraction (`phase0/beacon-chain.md:2028`) raises when the finalized
+  epoch is past the previous epoch, at each spec call of `is_in_inactivity_leak`
+  (`altair/beacon-chain.md:480`, `:768`). `Tests/FuluEpochPins.lean` and
+  `Tests/GloasEpochPins.lean` pin these rejects.
 - **`process_execution_payload` takes the execution engine as valid.** It checks
   parent-hash / prev-randao / timestamp consistency and caches the header;
   `verify_and_notify_new_payload` is the consumer's responsibility, which is valid for
