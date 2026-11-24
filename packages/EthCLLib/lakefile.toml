@@ -12,7 +12,7 @@ defaultTargets = ["EthCLLib"]
 # `-lcrypto` (not `-l:libcrypto.so.3`) resolves via the unversioned symlink
 # every platform's `-dev`/Homebrew package provides, so it works on both.
 moreLinkArgs = ["-L/usr/lib/x86_64-linux-gnu", "-L/usr/lib64", "-L/opt/homebrew/opt/openssl@3/lib", "-L/usr/local/opt/openssl@3/lib", "-lcrypto"]
-moreLeancArgs = ["-march=native"]
+moreLeancArgs = []
 
 # SizzLean supplies the SSZ machinery (SSZRepr, Box, the cache, sszGet /
 # sszUpdate, the Hasher class with the Sha256 / Sha256Spec tags). It

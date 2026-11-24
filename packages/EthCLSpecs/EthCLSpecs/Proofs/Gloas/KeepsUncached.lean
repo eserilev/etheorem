@@ -176,9 +176,9 @@ theorem returnsUncached_increaseBalance (state : BeaconState) (i : ValidatorInde
     rw [hrun, hu] at h
     dsimp only at h
     by_cases hc : balance + d < balance
-    · rw [ite_eq_left hc] at h
+    · rw [if_pos hc] at h
       simp at h
-    · rw [ite_eq_right hc] at h
+    · rw [if_neg hc] at h
       injection h with h1
       injection h1 with h1a h1b
       subst h1a
@@ -294,20 +294,13 @@ theorem keepsUncached_getAttestationParticipationFlagIndices (state : BeaconStat
     KeepsUncached (getAttestationParticipationFlagIndices
       (StateTransition := GloasRun) (pureState state) data inclusionDelay parentSlot) := by
   unfold getAttestationParticipationFlagIndices
-  refine keepsUncached_ite (fun _ => keepsUncached_pure _) (fun _ => ?_)
-  refine keepsUncached_bind ?br (fun _ => ?_)
-  · exact keepsUncached_getBlockRoot state _
-  · refine keepsUncached_bind ?ss (fun _ => ?_)
-    · exact keepsUncached_isAttestationSameSlot state _
-    · refine keepsUncached_ite (fun _ => keepsUncached_pure _) (fun _ => ?_)
-      refine keepsUncached_bind ?hr (fun _ => ?_)
-      · exact keepsUncached_getBlockRootAtSlot state _
-      · repeat' first
-          | refine keepsUncached_ite (fun _ => ?_) (fun _ => ?_)
-          | refine keepsUncached_bind (keepsUncached_pure _) (fun _a => ?_)
-          | exact keepsUncached_pure _
-
-
+  repeat' first
+    | exact keepsUncached_getBlockRoot state _
+    | exact keepsUncached_isAttestationSameSlot state _
+    | exact keepsUncached_getBlockRootAtSlot state _
+    | exact keepsUncached_pure _
+    | refine keepsUncached_ite (fun _ => ?_) (fun _ => ?_)
+    | refine keepsUncached_bind ?_ (fun _ => ?_)
 
 /-! ## `processProposerSlashing` and the two loop handlers
 
@@ -408,17 +401,17 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                               (α := Array EthCLSpecs.Gloas.ValidatorIndex) _
                           · refine keepsUncachedFrom_forIn_array_bind_P (T := BeaconState) (v := midState₁₃)
                               ?ob ?kt
-                              (P := fun (acc : EthCLSpecs.Gloas.State × Nat × EthCLSpecs.Gloas.Gwei) =>
-                                ∃ accState : BeaconState, acc.1 = pureState accState) ?hf ?hk idxs2
-                              (pureState state, 0,
+                              (P := fun (acc : MProd Nat (MProd EthCLSpecs.Gloas.State EthCLSpecs.Gloas.Gwei)) =>
+                                ∃ accState : BeaconState, acc.2.1 = pureState accState) ?hf ?hk idxs2
+                              ⟨0, pureState state,
                                 (EthCLLib.Spec.vget (pureState state).view.builderPendingPayments
                                   (EthCLSpecs.Gloas.builderPaymentIndex att.data.slot
                                     (att.data.target.epoch ==
-                                      EthCLSpecs.Gloas.currentEpochOf (pureState state)))).weight)
+                                      EthCLSpecs.Gloas.currentEpochOf (pureState state)))).weight⟩
                               ⟨state, rfl⟩
                             · intro vi b midState₁₄ r s hb hrun
                               obtain ⟨accState, hu⟩ := hb
-                              rcases b with ⟨sa, pn, ws⟩
+                              rcases b with ⟨pn, sa, ws⟩
                               rw [hu] at hrun
                               simp only [] at hrun
                               -- The `had_no_participation` read (beta.4) comes first: a gated
@@ -427,8 +420,8 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                               -- `ite_bind` folds the copies back into one bind.
                               rw [← ite_bind] at hrun
                               refine run_bind_inv (T := BeaconState) (γ := Unit) midState₁₄ (fun _ => True)
-                                (fun (acc : ForInStep (EthCLSpecs.Gloas.State × Nat × EthCLSpecs.Gloas.Gwei)) =>
-                                  ∃ accState : BeaconState, acc.value.1 = pureState accState)
+                                (fun (acc : ForInStep (MProd Nat (MProd EthCLSpecs.Gloas.State EthCLSpecs.Gloas.Gwei))) =>
+                                  ∃ accState : BeaconState, acc.value.2.1 = pureState accState)
                                 (fun r0 s0 h0 => ⟨keepsUncached_ite
                                   (fun _ => keepsUncached_sszGetIdx _ _)
                                   (fun _ => keepsUncached_sszGetIdx _ _) midState₁₄ r0 s0 h0, trivial⟩)
@@ -436,15 +429,15 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                               intro flags0 midState₁₄ _ r s hrun
                               refine keepsUncachedFrom_forIn_range_bind_run_inv
                                 (T := BeaconState) (v := midState₁₄)
-                                (P := fun (acc : EthCLSpecs.Gloas.State × Nat × Bool) =>
-                                  ∃ flagAccState : BeaconState, acc.1 = pureState flagAccState)
-                                (Q := fun (acc : ForInStep (EthCLSpecs.Gloas.State × Nat × EthCLSpecs.Gloas.Gwei)) =>
-                                  ∃ accState : BeaconState, acc.value.1 = pureState accState)
+                                (P := fun (acc : MProd Nat (MProd EthCLSpecs.Gloas.State Bool)) =>
+                                  ∃ flagAccState : BeaconState, acc.2.1 = pureState flagAccState)
+                                (Q := fun (acc : ForInStep (MProd Nat (MProd EthCLSpecs.Gloas.State EthCLSpecs.Gloas.Gwei))) =>
+                                  ∃ accState : BeaconState, acc.value.2.1 = pureState accState)
                                 (α := EthCLSpecs.Gloas.ValidatorIndex) (f := _) (k := _) ?hfin ?hkt 3
-                                (pureState accState, pn, false) ⟨accState, rfl⟩ r s hrun
+                                (MProd.mk pn (MProd.mk (pureState accState) false)) ⟨accState, rfl⟩ r s hrun
                               · intro cIdx b2 midState₁₅ r2 s2 hb2 hrun2
                                 obtain ⟨flagAccState, hu2⟩ := hb2
-                                rcases b2 with ⟨sa2, p2, ws2⟩
+                                rcases b2 with ⟨p2, sa2, ws2⟩
                                 rw [hu2] at hrun2
                                 simp only [] at hrun2
                                 split at hrun2
@@ -461,7 +454,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                                         simp at hrun2
                                       | ok rw =>
                                         rw [run_liftErr_of_ok _ _ hm, except_bind_ok] at hrun2
-                                        rw [run_pure] at hrun2
+                                        rw [run_bind, run_pure, except_bind_ok, run_pure] at hrun2
                                         injection hrun2 with h1
                                         injection h1 with h1a h1b
                                         subst h1a
@@ -470,7 +463,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                                           currentEpochParticipation :=
                                             (SSZ.Box.view (pureState flagAccState)).currentEpochParticipation.set!
                                               (UInt64.toNat vi) (EthCLLib.Spec.addFlag y cIdx) }), rfl⟩⟩
-                                    · rw [run_pure] at hrun2
+                                    · rw [run_bind, run_pure, except_bind_ok, run_pure] at hrun2
                                       injection hrun2 with h1
                                       injection h1 with h1a h1b
                                       subst h1a
@@ -492,7 +485,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                                         simp at hrun2
                                       | ok rw =>
                                         rw [run_liftErr_of_ok _ _ hm, except_bind_ok] at hrun2
-                                        rw [run_pure] at hrun2
+                                        rw [run_bind, run_pure, except_bind_ok, run_pure] at hrun2
                                         injection hrun2 with h1
                                         injection h1 with h1a h1b
                                         subst h1a
@@ -501,7 +494,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                                           previousEpochParticipation :=
                                             (SSZ.Box.view (pureState flagAccState)).previousEpochParticipation.set!
                                               (UInt64.toNat vi) (EthCLLib.Spec.addFlag y cIdx) }), rfl⟩⟩
-                                    · rw [run_pure] at hrun2
+                                    · rw [run_bind, run_pure, except_bind_ok, run_pure] at hrun2
                                       injection hrun2 with h1
                                       injection h1 with h1a h1b
                                       subst h1a
@@ -518,7 +511,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                                   cases hq : ((SSZ.Box.view (pureState state)).validators).val[(UInt64.toNat vi)]? with
                                   | some yv =>
                                     rw [run_sszGetIdx_some _ _ _ hq, except_bind_ok] at hrun3
-                                    rw [run_pure] at hrun3
+                                    rw [run_bind, run_pure, except_bind_ok, run_pure] at hrun3
                                     injection hrun3 with h1
                                     injection h1 with h1a h1b
                                     subst h1a
@@ -527,7 +520,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
                                   | none =>
                                     rw [run_sszGetIdx_none _ _ _ hq, except_bind_error] at hrun3
                                     simp at hrun3
-                                · rw [run_pure] at hrun3
+                                · rw [run_bind, run_pure, except_bind_ok, run_pure] at hrun3
                                   injection hrun3 with h1
                                   injection h1 with h1a h1b
                                   subst h1a
@@ -536,7 +529,7 @@ theorem keepsUncached_processAttestation (att : EthCLSpecs.Gloas.Attestation) (p
 
                             · intro b midState₁₇ hb
                               obtain ⟨accState, hu⟩ := hb
-                              rcases b with ⟨sa, pn, wt⟩
+                              rcases b with ⟨pn, sa, wt⟩
                               rw [hu]
                               refine returnsUncachedFrom_bind
                                 (returnsUncached_increaseBalance _ _ _) (fun afterIncrease midState₁₈ =>

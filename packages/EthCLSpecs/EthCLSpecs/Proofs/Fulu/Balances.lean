@@ -159,7 +159,7 @@ theorem increaseBalance_run_overflow [Preset] [HasherTag] :
   rw [runPure_eq, increaseBalance_run_eq state preState i delta,
     sszList_getElem?_eq_getElem! _ _ hidx]
   simp only
-  rw [ite_eq_left hcarry]
+  rw [if_pos hcarry]
   rfl
 
 /-- **In range, below the bound.** The run succeeds, and the whole-state equation writes the
@@ -183,7 +183,7 @@ theorem increaseBalance_run_no_wrap [Preset] [HasherTag] :
   rw [runPure_eq, increaseBalance_run_eq state preState i delta,
     sszList_getElem?_eq_getElem! _ _ hidx]
   simp only
-  rw [ite_eq_right hcarry, modBalance_pureState]
+  rw [if_neg hcarry, modBalance_pureState]
   rfl
 
 /-! ## `decreaseBalance`

@@ -29,11 +29,11 @@ open SizzLean.Repr
 
 /-- Below the capacity, `push?` is `some` of `push`. -/
 theorem sszListPush?_of_lt {α : Type} {cap : Nat} (xs : SSZList α cap) (x : α)
-    (h : xs.val.size < cap) : xs.push? x = some (xs.push x h) := dite_eq_left h
+    (h : xs.val.size < cap) : xs.push? x = some (xs.push x h) := dif_pos h
 
 /-- At the capacity, `push?` is `none`. -/
 theorem sszListPush?_of_le {α : Type} {cap : Nat} (xs : SSZList α cap) (x : α)
-    (h : cap ≤ xs.val.size) : xs.push? x = none := dite_eq_right (by omega)
+    (h : cap ≤ xs.val.size) : xs.push? x = none := dif_neg (by omega)
 
 /-- A fold of `push?` over `vs`, in the `Option` monad. When all of `vs` fits under `cap`,
 the result is the original array followed by `vs`, in order. Otherwise the fold stops at
@@ -59,7 +59,7 @@ theorem sszListFoldlMPush?_val {α : Type} {cap : Nat} (xs : SSZList α cap) (vs
     · rw [sszListPush?_of_le xs v (by omega)]
       have hover : ¬ (xs.val.size + (v :: rest).length ≤ cap) := by
         rw [List.length_cons]; omega
-      rw [ite_eq_right hover]
+      rw [if_neg hover]
       rfl
 
 end SizzLean.Proofs
